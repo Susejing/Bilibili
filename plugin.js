@@ -1,24 +1,7 @@
-// Bilibili — plugin de Bilibili para Kino · github.com/Susejing/kino-plugin-bilibili
-// Copyright (C) 2026 Susejing
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-// Kino plugin: Bilibili v0.7.6
-// Novedades v0.7.6:
-// - Modo China: Inicio ampliado con múltiples filas (Anime, Series, Cine).
-// - Búsqueda (China e Internacional): Ahora prioriza películas y series sobre clips cortos.
-// - Subtítulos: Añadido soporte para subtítulos en el modo China.
+// Bilibili — plugin para Kino v0.8.0
+// - Añadido soporte para visualBrowser (apiVersion 20).
+// - Nueva acción "link_account" para iniciar sesión en Bilibili y capturar SESSDATA.
+// - getJson ahora usa la cookie guardada para evitar el bloqueo 412.
 
 const API = "https://api.bilibili.com";
 const WEB = "https://www.bilibili.com";
@@ -45,6 +28,7 @@ function mode() {
   return m === "china" ? "china" : "intl";
 }
 
+// Lee la cookie SESSDATA desde el ajuste.
 function sessdata() {
   let s = String(kino.config.get("sessdata") || "").trim();
   if (s.toLowerCase().startsWith("sessdata=")) s = s.slice(9).trim();
@@ -64,7 +48,7 @@ function posterUrl(pic) {
 }
 
 // ---------------------------------------------------------------------------
-// Memoria (6 h) para que el catálogo cargue rápido y no martillee el sitio
+// Memoria (6 h)
 // ---------------------------------------------------------------------------
 
 function readCache(key) {
@@ -83,13 +67,8 @@ function readCache(key) {
 function writeCache(key, items, cap) {
   try {
     const slim = (items || []).slice(0, cap || 60).map((it) => ({
-      id: it.id,
-      ref: it.ref,
-      title: it.title,
-      kind: it.kind || "series",
-      poster: it.poster,
-      genres: it.genres,
-      badges: it.badges,
+      id: it.id, ref: it.ref, title: it.title, kind: it.kind || "series",
+      poster: it.poster, genres: it.genres, badges: it.badges,
       overview: it.overview ? String(it.overview).slice(0, 300) : undefined,
     }));
     kino.storage.set(key, JSON.stringify({ ts: Date.now(), items: slim }));
@@ -118,7 +97,7 @@ function setFailMarker(key) {
 }
 
 // ---------------------------------------------------------------------------
-// Modo China (bilibili.com)
+// Modo China (bilibili.com) con soporte de cookies y login
 // ---------------------------------------------------------------------------
 
 let buvidCache = null;
@@ -198,9 +177,7 @@ function toVideoItem(v) {
     title: cleanTitle(v.title),
     kind: "movie",
     poster: posterUrl(v.pic),
-    year: v.pubdate
-      ? String(new Date(v.pubdate * 1000).getFullYear())
-      : undefined,
+    year: v.pubdate ? String(new Date(v.pubdate * 1000).getFullYear()) : undefined,
     overview: cleanTitle(v.description || v.desc || "").slice(0, 300),
   };
 }
@@ -215,8 +192,7 @@ async function getJson(url) {
   if (!r.ok) {
     if (r.status === 412) {
       throw kino.error("unavailable", "HTTP 412", {
-        userMessage:
-          "Bilibili bloqueó la reproducción (412). Prueba VPN (HK/JP) o míralo en la app oficial.",
+        userMessage: "Bilibili bloqueó la reproducción (412). Vincula tu cuenta de Bilibili en los ajustes del plugin para evitar este bloqueo.",
       });
     }
     throw kino.error("unavailable", "HTTP " + r.status, {
@@ -226,8 +202,7 @@ async function getJson(url) {
   const text = r.text();
   if (text.trim().startsWith("<")) {
     throw kino.error("unavailable", "blocked", {
-      userMessage:
-        "Bilibili bloqueó la petición. Prueba VPN o la app oficial.",
+      userMessage: "Bilibili bloqueó la petición. Vincula tu cuenta o prueba VPN.",
     });
   }
   let data;
@@ -242,8 +217,7 @@ async function getJson(url) {
     const msg = data.message || String(data.code);
     if (data.code === -412 || data.code === 412) {
       throw kino.error("unavailable", msg, {
-        userMessage:
-          "Bilibili bloqueó el stream. Prueba VPN (HK/JP) o la app oficial.",
+        userMessage: "Bilibili bloqueó el stream (412). Vincula tu cuenta o usa VPN.",
       });
     }
     throw kino.error("unavailable", msg, {
@@ -253,7 +227,40 @@ async function getJson(url) {
   return data;
 }
 
-// Búsqueda mejorada con prioridad de duración
+// --- INICIO: Nueva acción para vincular la cuenta ---
+export async function action(key) {
+  if (key !== "link_account") return;
+  if (!kino.visualBrowser?.available) {
+    return { message: "El navegador visual no está disponible. Pega la cookie SESSDATA a mano en el campo de abajo." };
+  }
+
+  // Abrimos la ventana de login de Bilibili.
+  // Al terminar, Kino guardará automáticamente la cookie SESSDATA.
+  const r = await kino.visualBrowser.open({
+    url: "https://passport.bilibili.com/login",
+    title: "Iniciar sesión en Bilibili",
+    userAgent: "browser",
+    doneWhen: { urlMatches: "*bilibili.com*" },
+    collect: {
+      cookies: ["SESSDATA"],
+      storeAs: {
+        setting: "sessdata",
+        format: "header",
+      },
+    },
+    timeoutMs: 600000, // 10 minutos
+  });
+
+  if (r.status === "done" && r.stored) {
+    return { message: "¡Cuenta vinculada! La cookie SESSDATA se guardó correctamente." };
+  } else if (r.status === "closed") {
+    return { message: "Inicio de sesión cancelado." };
+  } else {
+    return { message: "No se pudo vincular la cuenta. Inténtalo de nuevo." };
+  }
+}
+
+// Búsqueda mejorada
 async function cnSearch(q) {
   const url = API + "/x/web-interface/search/all/v2?keyword=" + encodeURIComponent(q) + "&page=1";
   const data = await getJson(url);
@@ -285,7 +292,7 @@ async function cnSearch(q) {
   return out.map(i => { delete i._dur; return i; });
 }
 
-// Inicio China ampliado con múltiples secciones
+// Inicio China con múltiples filas
 async function cnHome() {
   const urls = [
     { id: "popular", title: "Populares en Bilibili", url: API + "/x/web-interface/ranking/v2?rid=0&type=all" },
@@ -328,7 +335,6 @@ function streamFromPlay(d, realBvid) {
   return null;
 }
 
-// Nueva función de subtítulos para China
 async function cnSubtitles(bvid, cid) {
   try {
     const url = API + "/x/player/v2?bvid=" + bvid + "&cid=" + cid;
@@ -408,13 +414,12 @@ async function cnResolve(ref) {
   if (lastErr) throw lastErr;
 
   throw kino.error("unavailable", "no stream", {
-    userMessage:
-      "No se pudo reproducir. Fuera de Asia suele hacer falta VPN (HK/JP) o verlo en la app de Bilibili.",
+    userMessage: "No se pudo reproducir. Vincula tu cuenta o usa VPN (HK/JP).",
   });
 }
 
 // ---------------------------------------------------------------------------
-// Modo internacional (bilibili.tv / app global)
+// Modo internacional (bilibili.tv) - Se mantiene igual
 // ---------------------------------------------------------------------------
 
 let intlBuvidCache = null;
@@ -499,7 +504,6 @@ function decodeJsonText(s) {
   }
 }
 
-// Búsqueda mejorada con prioridad OGV
 async function intlSearch(q, cursor) {
   const pn = cursor ? Math.max(1, parseInt(cursor, 10) || 1) : 1;
   const data = await intlJson(
@@ -553,13 +557,12 @@ async function intlSearch(q, cursor) {
 }
 
 // ---------------------------------------------------------------------------
-// Catálogo Internacional
+// Catálogo Internacional (sin cambios)
 // ---------------------------------------------------------------------------
 
 function parseAnimeHtml(html) {
   const out = [];
   const seen = new Set();
-
   const decoded = String(html).replace(/\\"/g, '"').replace(/&quot;/g, '"').replace(/&#34;/g, '"');
 
   const re = /"season_id"\s*:\s*"?(\d{1,12})"?/g;
@@ -863,7 +866,7 @@ async function intlHome() {
     rows.push({ id: "bts-destacadas", title: "Series destacadas", items: destacadas.slice(0, 20), ref: "browse:catalog" });
   }
 
-  log("home v0.7.6: " + (rows.length ? rows.map((r) => r.title + " " + r.items.length).join(" | ") : "sin filas"));
+  log("home v0.8.0: " + (rows.length ? rows.map((r) => r.title + " " + r.items.length).join(" | ") : "sin filas"));
 
   if (rows.length) return rows;
 
@@ -1088,4 +1091,4 @@ export async function resolve(ref) {
   if (s.startsWith("e:")) return intlResolve("e", s.slice(2));
   if (s.startsWith("v:")) return intlResolve("v", s.slice(2));
   return cnResolve(s);
-}
+      }
