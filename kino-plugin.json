@@ -1,7 +1,7 @@
 {
   "id": "bilibili",
   "name": "Bilibili",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "apiVersion": 20,
   "entry": "plugin.js",
   "description": "Bilibili internacional (bilibili.tv) y China (bilibili.com) con soporte para inicio de sesión y captura de cookies.",
