@@ -1,10 +1,10 @@
 {
   "id": "bilibili",
   "name": "Bilibili",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "apiVersion": 20,
   "entry": "plugin.js",
-  "description": "Bilibili internacional (bilibili.tv) y China (bilibili.com) con soporte para inicio de sesión y captura de cookies.",
+  "description": "Bilibili internacional y China con soporte para inicio de sesión, historial y favoritos.",
   "author": "Susejing",
   "homepage": "https://github.com/Susejing/kino-plugin-bilibili",
   "hosts": [
