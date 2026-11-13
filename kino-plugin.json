@@ -1,7 +1,7 @@
 {
   "id": "bilibili",
   "name": "Bilibili",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "apiVersion": 23,
   "entry": "plugin.js",
   "description": "Bilibili internacional y China con integración total: Historial, Favoritos, Trakt, Descargas, Temas y más.",
