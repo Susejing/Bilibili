@@ -1,10 +1,10 @@
 {
   "id": "bilibili",
   "name": "Bilibili",
-  "version": "1.0.2",
+  "version": "1.0.5",
   "apiVersion": 23,
   "entry": "plugin.js",
-  "description": "Bilibili internacional y China con integración total: Historial, Favoritos, Trakt, Descargas, Temas y más.",
+  "description": "Bilibili con historial, favoritos, Trakt, descargas, temas y ventana de navegador para iniciar sesión.",
   "author": "Susejing",
   "homepage": "https://github.com/Susejing/kino-plugin-bilibili",
   "hosts": [
@@ -20,14 +20,22 @@
   ],
   "streamHosts": "any",
   "capabilities": [
-    "search", "home", "browse", "episodes", "resolve", 
-    "subtitles", "segments", "track", "lists", 
-    "download", "scopedSearch", "categories"
+    "search",
+    "home",
+    "browse",
+    "episodes",
+    "resolve",
+    "subtitles",
+    "segments",
+    "tracking",
+    "playlists",
+    "download",
+    "scopedSearch"
   ],
-  "browser": "pages",
   "visualBrowser": true,
-  "color": "#FB7299",
+  "browser": "pages",
   "categories": ["anime", "movies", "series"],
+  "color": "#FB7299",
   "debug": true,
   "settings": [
     {
@@ -36,21 +44,21 @@
       "type": "select",
       "default": "intl",
       "options": [
-        { "value": "intl", "label": "Internacional (sin VPN)" },
-        { "value": "china", "label": "China (con VPN)" }
+        { "value": "intl", "label": "Internacional" },
+        { "value": "china", "label": "China" }
       ],
-      "hint": "Internacional usa bilibili.tv. China usa bilibili.com."
+      "hint": "China suele requerir VPN."
     },
     {
       "key": "link_account",
-      "label": "Vincular cuenta de Bilibili (China)",
+      "label": "Vincular cuenta China",
       "type": "action"
     },
     {
       "key": "sessdata",
-      "label": "Cookie SESSDATA (o pegar a mano)",
+      "label": "Cookie SESSDATA",
       "type": "password",
-      "hint": "Opcional."
+      "hint": "Se llena automáticamente."
     },
     {
       "key": "trakt_sync",
