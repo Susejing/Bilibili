@@ -1,7 +1,7 @@
 {
   "id": "bilibili",
   "name": "Bilibili",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "apiVersion": 23,
   "entry": "plugin.js",
   "description": "Bilibili internacional y China con integración total: Historial, Favoritos, Trakt, Descargas, Temas y más.",
@@ -39,7 +39,7 @@
         { "value": "intl", "label": "Internacional (sin VPN)" },
         { "value": "china", "label": "China (con VPN)" }
       ],
-      "hint": "Internacional usa bilibili.tv. China usa bilibili.com y suele requerir VPN."
+      "hint": "Internacional usa bilibili.tv. China usa bilibili.com."
     },
     {
       "key": "link_account",
@@ -50,7 +50,7 @@
       "key": "sessdata",
       "label": "Cookie SESSDATA (o pegar a mano)",
       "type": "password",
-      "hint": "Opcional. Se llena automáticamente al vincular la cuenta."
+      "hint": "Opcional."
     },
     {
       "key": "trakt_sync",
