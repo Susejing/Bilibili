@@ -1,10 +1,10 @@
 {
   "id": "bilibili",
   "name": "Bilibili",
-  "version": "0.7.6",
-  "apiVersion": 6,
+  "version": "0.8.0",
+  "apiVersion": 20,
   "entry": "plugin.js",
-  "description": "Bilibili internacional (bilibili.tv): anime y videos con licencia global, sin VPN. Modo China opcional (bilibili.com, puede requerir VPN).",
+  "description": "Bilibili internacional (bilibili.tv) y China (bilibili.com) con soporte para inicio de sesión y captura de cookies.",
   "author": "Susejing",
   "homepage": "https://github.com/Susejing/kino-plugin-bilibili",
   "hosts": [
@@ -15,11 +15,13 @@
     "api.bilibili.tv",
     "www.bilibili.tv",
     "*.bilibili.tv",
-    "*.akamaized.net"
+    "*.akamaized.net",
+    "passport.bilibili.com"
   ],
   "streamHosts": "any",
   "capabilities": ["search", "home", "browse", "episodes", "resolve"],
   "browser": "pages",
+  "visualBrowser": true,
   "color": "#FB7299",
   "categories": ["anime", "movies", "series"],
   "debug": true,
@@ -36,10 +38,15 @@
       "hint": "Internacional usa bilibili.tv. China usa bilibili.com y suele requerir VPN."
     },
     {
+      "key": "link_account",
+      "label": "Vincular cuenta de Bilibili (China)",
+      "type": "action"
+    },
+    {
       "key": "sessdata",
-      "label": "Cookie SESSDATA (solo China)",
+      "label": "Cookie SESSDATA (o pegar a mano)",
       "type": "password",
-      "hint": "Opcional. F12, Application, Cookies, SESSDATA"
+      "hint": "Opcional. Se llena automáticamente al vincular la cuenta."
     }
   ]
 }
