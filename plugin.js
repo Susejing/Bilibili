@@ -1,5 +1,5 @@
-// Bilibili — plugin para Kino v0.8.1
-// - Corregido el visualBrowser para que no se cierre antes de iniciar sesión.
+// Bilibili — plugin para Kino v0.8.2
+// - Añadidas filas personalizadas (Historial, Favoritos, Recomendados) si hay SESSDATA.
 
 const API = "https://api.bilibili.com";
 const WEB = "https://www.bilibili.com";
@@ -26,7 +26,6 @@ function mode() {
   return m === "china" ? "china" : "intl";
 }
 
-// Lee la cookie SESSDATA desde el ajuste.
 function sessdata() {
   let s = String(kino.config.get("sessdata") || "").trim();
   if (s.toLowerCase().startsWith("sessdata=")) s = s.slice(9).trim();
@@ -46,7 +45,7 @@ function posterUrl(pic) {
 }
 
 // ---------------------------------------------------------------------------
-// Memoria (6 h)
+// Memoria
 // ---------------------------------------------------------------------------
 
 function readCache(key) {
@@ -73,29 +72,8 @@ function writeCache(key, items, cap) {
   } catch {}
 }
 
-function failKeyOf(url) {
-  return url.indexOf("/popular") >= 0 ? "cache:popularFail" : "cache:animeFail";
-}
-
-function failRecent(key) {
-  try {
-    const raw = kino.storage.get(key);
-    if (!raw) return false;
-    const obj = JSON.parse(raw);
-    return !!(obj && obj.ts && Date.now() - obj.ts < 5 * 60 * 1000);
-  } catch {
-    return false;
-  }
-}
-
-function setFailMarker(key) {
-  try {
-    kino.storage.set(key, JSON.stringify({ ts: Date.now() }));
-  } catch {}
-}
-
 // ---------------------------------------------------------------------------
-// Modo China (bilibili.com) con soporte de cookies y login
+// Autenticación y Buvid
 // ---------------------------------------------------------------------------
 
 let buvidCache = null;
@@ -122,26 +100,19 @@ async function ensureBuvid() {
           b3: data.data.b_3 || data.data.buvid3 || "",
           b4: data.data.b_4 || data.data.buvid4 || "",
         };
-        try {
-          kino.storage.set("buvid", buvidCache);
-        } catch {}
+        try { kino.storage.set("buvid", buvidCache); } catch {}
         return buvidCache;
       }
     }
-  } catch (e) {
-    log("buvid", e && e.message);
-  }
+  } catch (e) { log("buvid", e && e.message); }
 
-  const rand = () =>
-    "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-      const n = (Math.random() * 16) | 0;
-      const v = c === "x" ? n : (n & 0x3) | 0x8;
-      return v.toString(16);
-    });
+  const rand = () => "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const n = (Math.random() * 16) | 0;
+    const v = c === "x" ? n : (n & 0x3) | 0x8;
+    return v.toString(16);
+  });
   buvidCache = { b3: rand() + "infoc", b4: rand() };
-  try {
-    kino.storage.set("buvid", buvidCache);
-  } catch {}
+  try { kino.storage.set("buvid", buvidCache); } catch {}
   return buvidCache;
 }
 
@@ -157,16 +128,109 @@ function cookieHeader() {
 }
 
 function baseHeaders(extra) {
-  const h = {
-    "User-Agent": UA,
-    Referer: WEB + "/",
-    Origin: WEB,
-  };
+  const h = { "User-Agent": UA, Referer: WEB + "/", Origin: WEB };
   const ck = cookieHeader();
   if (ck) h.Cookie = ck;
   if (extra) for (const k in extra) h[k] = extra[k];
   return h;
 }
+
+async function getJson(url) {
+  await ensureBuvid();
+  const r = await kino.fetch(url, { headers: baseHeaders(), cookies: true, timeoutMs: 20000 });
+  if (!r.ok) {
+    if (r.status === 412) throw kino.error("unavailable", "HTTP 412", { userMessage: "Bilibili bloqueó la reproducción (412)." });
+    throw kino.error("unavailable", "HTTP " + r.status, { userMessage: "Bilibili no respondió." });
+  }
+  const text = r.text();
+  if (text.trim().startsWith("<")) throw kino.error("unavailable", "blocked", { userMessage: "Bilibili bloqueó la petición." });
+  let data;
+  try { data = JSON.parse(text); } catch { throw kino.error("unavailable", "bad json", { userMessage: "Respuesta inválida." }); }
+  if (data.code !== 0 && data.code !== undefined) {
+    const msg = data.message || String(data.code);
+    if (data.code === -412 || data.code === 412) throw kino.error("unavailable", msg, { userMessage: "Bilibili bloqueó el stream (412)." });
+    throw kino.error("unavailable", msg, { userMessage: "Bilibili: " + msg });
+  }
+  return data;
+}
+
+// ---------------------------------------------------------------------------
+// Funciones de Cuenta (Historial, Favoritos, Recomendados)
+// ---------------------------------------------------------------------------
+
+async function fetchHistory() {
+  if (!sessdata()) return [];
+  try {
+    const data = await getJson(API + "/x/web-interface/history/cursor?ps=20&type=all");
+    const list = (data.data && data.data.list) || [];
+    return list.map(v => {
+      // Para el historial, el bvid viene dentro del objeto history
+      const bvid = v.history ? v.history.bvid : v.bvid;
+      return {
+        id: bvid || v.aid,
+        ref: bvid || ("av" + v.aid),
+        title: cleanTitle(v.title),
+        kind: "movie",
+        poster: posterUrl(v.cover),
+        overview: `Visto recientemente · ${cleanTitle(v.long_title)}`,
+        progress: v.progress ? (v.progress / (v.duration || 1)) : 0
+      };
+    }).filter(i => i.ref);
+  } catch (e) {
+    log("Historial falló:", e.message);
+    return [];
+  }
+}
+
+async function fetchFavorites() {
+  if (!sessdata()) return [];
+  try {
+    const foldersData = await getJson(API + "/x/v3/fav/folder/created/list-all");
+    const folders = (foldersData.data && foldersData.data.list) || [];
+    if (!folders.length) return [];
+    
+    // Tomamos la primera carpeta de favoritos por defecto
+    const mediaId = folders[0].id;
+    const itemsData = await getJson(API + "/x/v3/fav/resource/list?media_id=" + mediaId + "&ps=20&pn=1&platform=web");
+    const medias = (itemsData.data && itemsData.data.medias) || [];
+    
+    return medias.map(v => ({
+      id: v.bvid || v.id,
+      ref: v.bvid || ("av" + v.id),
+      title: cleanTitle(v.title),
+      kind: "movie",
+      poster: posterUrl(v.cover),
+      overview: `De tu colección: ${folders[0].title}`
+    })).filter(i => i.ref);
+  } catch (e) {
+    log("Favoritos falló:", e.message);
+    return [];
+  }
+}
+
+async function fetchRecommended() {
+  if (!sessdata()) return [];
+  try {
+    // Intentamos el feed recomendado (sin firma WBI, a veces funciona solo con SESSDATA)
+    const data = await getJson(API + "/x/web-interface/wbi/index/top/feed/rcmd?ps=20&fresh_type=4");
+    const items = (data.data && data.data.item) || [];
+    return items.map(v => ({
+      id: v.bvid || v.id,
+      ref: v.bvid || ("av" + v.id),
+      title: cleanTitle(v.title),
+      kind: "movie",
+      poster: posterUrl(v.pic),
+      overview: v.owner ? `Por ${cleanTitle(v.owner.name)}` : ""
+    })).filter(i => i.ref);
+  } catch (e) {
+    log("Recomendados falló (posible WBI):", e.message);
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Búsqueda y Home
+// ---------------------------------------------------------------------------
 
 function toVideoItem(v) {
   return {
@@ -180,89 +244,11 @@ function toVideoItem(v) {
   };
 }
 
-async function getJson(url) {
-  await ensureBuvid();
-  const r = await kino.fetch(url, {
-    headers: baseHeaders(),
-    cookies: true,
-    timeoutMs: 20000,
-  });
-  if (!r.ok) {
-    if (r.status === 412) {
-      throw kino.error("unavailable", "HTTP 412", {
-        userMessage: "Bilibili bloqueó la reproducción (412). Vincula tu cuenta de Bilibili en los ajustes del plugin para evitar este bloqueo.",
-      });
-    }
-    throw kino.error("unavailable", "HTTP " + r.status, {
-      userMessage: "Bilibili no respondió (HTTP " + r.status + ")",
-    });
-  }
-  const text = r.text();
-  if (text.trim().startsWith("<")) {
-    throw kino.error("unavailable", "blocked", {
-      userMessage: "Bilibili bloqueó la petición. Vincula tu cuenta o prueba VPN.",
-    });
-  }
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    throw kino.error("unavailable", "bad json", {
-      userMessage: "Respuesta inválida de Bilibili",
-    });
-  }
-  if (data.code !== 0 && data.code !== undefined) {
-    const msg = data.message || String(data.code);
-    if (data.code === -412 || data.code === 412) {
-      throw kino.error("unavailable", msg, {
-        userMessage: "Bilibili bloqueó el stream (412). Vincula tu cuenta o usa VPN.",
-      });
-    }
-    throw kino.error("unavailable", msg, {
-      userMessage: "Bilibili: " + msg,
-    });
-  }
-  return data;
-}
-
-// --- INICIO: Acción para vincular la cuenta ---
-export async function action(key) {
-  if (key !== "link_account") return;
-  if (!kino.visualBrowser?.available) {
-    return { message: "El navegador visual no está disponible. Pega la cookie SESSDATA a mano en el campo de abajo." };
-  }
-
-  const r = await kino.visualBrowser.open({
-    url: "https://passport.bilibili.com/login",
-    title: "Iniciar sesión en Bilibili",
-    userAgent: "browser",
-    // Espera a la página principal, no al dominio del login
-    doneWhen: { urlMatches: "*www.bilibili.com*" },
-    collect: {
-      cookies: ["SESSDATA"],
-      storeAs: {
-        setting: "sessdata",
-        format: "header",
-      },
-    },
-    timeoutMs: 600000,
-  });
-
-  if (r.status === "done" && r.stored) {
-    return { message: "¡Cuenta vinculada! La cookie SESSDATA se guardó correctamente." };
-  } else if (r.status === "closed") {
-    return { message: "Inicio de sesión cancelado." };
-  } else {
-    return { message: "No se pudo vincular la cuenta. Inténtalo de nuevo." };
-  }
-}
-
-// Búsqueda mejorada
 async function cnSearch(q) {
   const url = API + "/x/web-interface/search/all/v2?keyword=" + encodeURIComponent(q) + "&page=1";
   const data = await getJson(url);
   const blocks = (data.data && data.data.result) || [];
-  const out = [];
+  let out = [];
   const seen = new Set();
 
   for (const block of blocks) {
@@ -271,7 +257,6 @@ async function cnSearch(q) {
     for (const v of list) {
       const item = toVideoItem(v);
       if (!item.ref || seen.has(item.ref)) continue;
-      
       let durSecs = 0;
       if (v.duration) {
         const parts = v.duration.split(':').map(Number);
@@ -279,18 +264,31 @@ async function cnSearch(q) {
         else if (parts.length === 3) durSecs = parts[0] * 3600 + parts[1] * 60 + parts[2];
       }
       item._dur = durSecs;
-
       seen.add(item.ref);
       out.push(item);
     }
   }
-  
   out.sort((a, b) => b._dur - a._dur);
   return out.map(i => { delete i._dur; return i; });
 }
 
-// Inicio China con múltiples filas
 async function cnHome() {
+  const rows = [];
+  
+  // Si hay sesión iniciada, cargamos las filas personalizadas primero
+  if (sessdata()) {
+    const [history, favorites, recommended] = await Promise.all([
+      fetchHistory(),
+      fetchFavorites(),
+      fetchRecommended()
+    ]);
+
+    if (history.length > 0) rows.push({ id: "continue", title: "⏱️ Continuar viendo", items: history });
+    if (favorites.length > 0) rows.push({ id: "favs", title: "❤️ Mis Favoritos", items: favorites });
+    if (recommended.length > 0) rows.push({ id: "rec", title: "✨ Recomendado para ti", items: recommended });
+  }
+
+  // Luego cargamos las filas generales de rankings
   const urls = [
     { id: "popular", title: "Populares en Bilibili", url: API + "/x/web-interface/ranking/v2?rid=0&type=all" },
     { id: "anime", title: "Anime en Tendencia", url: API + "/x/web-interface/ranking/v2?rid=1&type=all" },
@@ -303,27 +301,23 @@ async function cnHome() {
       const data = await getJson(u.url);
       const list = (data.data && data.data.list) || [];
       if (list.length > 0) {
-        return {
-          id: u.id,
-          title: u.title,
-          items: list.slice(0, 20).map(toVideoItem),
-        };
+        return { id: u.id, title: u.title, items: list.slice(0, 20).map(toVideoItem) };
       }
-    } catch (e) {
-      log("Error cargando fila " + u.title + ": " + e.message);
-    }
+    } catch (e) { log("Error cargando fila " + u.title + ": " + e.message); }
     return null;
   });
 
-  const rows = await Promise.all(promises);
-  return rows.filter(r => r !== null);
+  const generalRows = await Promise.all(promises);
+  return rows.concat(generalRows.filter(r => r !== null));
 }
+
+// ---------------------------------------------------------------------------
+// Resolución y Subtítulos
+// ---------------------------------------------------------------------------
 
 function streamFromPlay(d, realBvid) {
   const headers = baseHeaders({ Referer: WEB + "/video/" + realBvid });
-  if (d.durl && d.durl[0] && d.durl[0].url) {
-    return { url: d.durl[0].url, headers, mime: "video/mp4" };
-  }
+  if (d.durl && d.durl[0] && d.durl[0].url) return { url: d.durl[0].url, headers, mime: "video/mp4" };
   if (d.dash && d.dash.video && d.dash.video.length) {
     const v = d.dash.video.find((x) => x.codecid === 7) || d.dash.video[0];
     const u = v.baseUrl || v.base_url;
@@ -342,29 +336,19 @@ async function cnSubtitles(bvid, cid) {
       if (sub.subtitle_url && sub.lan) {
         let u = sub.subtitle_url;
         if (u.startsWith("//")) u = "https:" + u;
-        out.push({
-          lang: sub.lan,
-          url: u,
-          format: "json"
-        });
+        out.push({ lang: sub.lan, url: u, format: "json" });
       }
     }
     return out;
-  } catch (e) {
-    log("Error obteniendo subtítulos CN:", e.message);
-    return [];
-  }
+  } catch (e) { return []; }
 }
 
 async function cnResolve(ref) {
   await ensureBuvid();
-
   const s = String(ref);
-  let bvid = null;
-  let aid = null;
-  if (s.startsWith("BV")) bvid = s;
-  else if (s.startsWith("av")) aid = s.slice(2);
-  else bvid = s;
+  let bvid = s.startsWith("BV") ? s : null;
+  let aid = s.startsWith("av") ? s.slice(2) : null;
+  if (!bvid && !aid) bvid = s;
 
   let viewUrl = API + "/x/web-interface/view?";
   if (bvid) viewUrl += "bvid=" + encodeURIComponent(bvid);
@@ -372,20 +356,15 @@ async function cnResolve(ref) {
 
   const view = await getJson(viewUrl);
   const vd = view.data;
-  if (!vd) {
-    throw kino.error("not_found", "no data", {
-      userMessage: "Video no encontrado",
-    });
-  }
+  if (!vd) throw kino.error("not_found", "no data", { userMessage: "Video no encontrado" });
 
   const cid = vd.cid;
   const realBvid = vd.bvid;
-  const realAid = vd.aid;
 
   const attempts = [
     API + "/x/player/playurl?bvid=" + encodeURIComponent(realBvid) + "&cid=" + cid + "&qn=64&fnval=1&platform=html5&high_quality=1",
     API + "/x/player/playurl?bvid=" + encodeURIComponent(realBvid) + "&cid=" + cid + "&qn=32&fnval=1&platform=html5",
-    API + "/x/player/playurl?avid=" + realAid + "&cid=" + cid + "&qn=32&fnval=0",
+    API + "/x/player/playurl?avid=" + vd.aid + "&cid=" + cid + "&qn=32&fnval=0",
   ];
 
   let lastErr = null;
@@ -397,26 +376,39 @@ async function cnResolve(ref) {
         try {
           const subs = await cnSubtitles(realBvid, cid);
           if (subs.length) stream.subtitles = subs;
-        } catch (subErr) {
-          log("Error obteniendo subs CN:", subErr.message);
-        }
+        } catch (subErr) {}
         return stream;
       }
-    } catch (e) {
-      lastErr = e;
-      log("play fail", e && e.message);
-    }
+    } catch (e) { lastErr = e; }
   }
-
   if (lastErr) throw lastErr;
-
-  throw kino.error("unavailable", "no stream", {
-    userMessage: "No se pudo reproducir. Vincula tu cuenta o usa VPN (HK/JP).",
-  });
+  throw kino.error("unavailable", "no stream", { userMessage: "No se pudo reproducir." });
 }
 
 // ---------------------------------------------------------------------------
-// Modo internacional (bilibili.tv)
+// Acción de Vincular Cuenta
+// ---------------------------------------------------------------------------
+
+export async function action(key) {
+  if (key !== "link_account") return;
+  if (!kino.visualBrowser?.available) return { message: "El navegador visual no está disponible. Pega la cookie SESSDATA a mano." };
+
+  const r = await kino.visualBrowser.open({
+    url: "https://passport.bilibili.com/login",
+    title: "Iniciar sesión en Bilibili",
+    userAgent: "browser",
+    doneWhen: { urlMatches: "*www.bilibili.com*" },
+    collect: { cookies: ["SESSDATA"], storeAs: { setting: "sessdata", format: "header" } },
+    timeoutMs: 600000,
+  });
+
+  if (r.status === "done" && r.stored) return { message: "¡Cuenta vinculada! La cookie se guardó correctamente." };
+  if (r.status === "closed") return { message: "Inicio de sesión cancelado." };
+  return { message: "No se pudo vincular. Inténtalo de nuevo." };
+}
+
+// ---------------------------------------------------------------------------
+// Modo Internacional (Intacto)
 // ---------------------------------------------------------------------------
 
 let intlBuvidCache = null;
@@ -424,31 +416,21 @@ let intlBuvidCache = null;
 function intlBuvid() {
   if (intlBuvidCache) return intlBuvidCache;
   let saved = null;
-  try {
-    saved = kino.storage.get("intlBuvid");
-  } catch {}
-  if (saved && saved.b3) {
-    intlBuvidCache = saved;
-    return intlBuvidCache;
-  }
+  try { saved = kino.storage.get("intlBuvid"); } catch {}
+  if (saved && saved.b3) { intlBuvidCache = saved; return intlBuvidCache; }
   const hex = "0123456789abcdef";
   const p = [];
   for (let i = 0; i < 32; i++) p.push(hex[(Math.random() * 16) | 0]);
-  const uuid =
-    p.slice(0, 8).join("") + "-" + p.slice(8, 12).join("") + "-" + p.slice(12, 16).join("") + "-" + p.slice(16, 20).join("") + "-" + p.slice(20, 32).join("");
+  const uuid = p.slice(0, 8).join("") + "-" + p.slice(8, 12).join("") + "-" + p.slice(12, 16).join("") + "-" + p.slice(16, 20).join("") + "-" + p.slice(20, 32).join("");
   intlBuvidCache = { b3: uuid + "infoc", b4: uuid };
-  try {
-    kino.storage.set("intlBuvid", intlBuvidCache);
-  } catch {}
+  try { kino.storage.set("intlBuvid", intlBuvidCache); } catch {}
   return intlBuvidCache;
 }
 
 function intlHeaders(extra) {
   const b = intlBuvid();
   const h = {
-    "User-Agent": INTL_UA,
-    Referer: INTL_WEB + "/",
-    Origin: INTL_WEB,
+    "User-Agent": INTL_UA, Referer: INTL_WEB + "/", Origin: INTL_WEB,
     "Accept-Language": "en-US,en;q=0.9",
     Cookie: "buvid3=" + b.b3 + "; buvid4=" + b.b4 + "; bstar-web-lang=en",
   };
@@ -457,55 +439,22 @@ function intlHeaders(extra) {
 }
 
 async function intlJson(url) {
-  const r = await kino.fetch(url, {
-    headers: intlHeaders(),
-    timeoutMs: 20000,
-  });
-  if (!r.ok) {
-    throw kino.error("unavailable", "HTTP " + r.status, {
-      userMessage: "La app internacional de Bilibili respondió con HTTP " + r.status,
-    });
-  }
+  const r = await kino.fetch(url, { headers: intlHeaders(), timeoutMs: 20000 });
+  if (!r.ok) throw kino.error("unavailable", "HTTP " + r.status, { userMessage: "Bilibili internacional respondió HTTP " + r.status });
   let data;
-  try {
-    data = JSON.parse(r.text());
-  } catch {
-    throw kino.error("unavailable", "bad json", {
-      userMessage: "Respuesta inválida de Bilibili internacional",
-    });
-  }
+  try { data = JSON.parse(r.text()); } catch { throw kino.error("unavailable", "bad json", { userMessage: "Respuesta inválida." }); }
   if (data.code !== 0) {
     const c = data.code;
-    if (c === 10004001) {
-      throw kino.error("geo_blocked", "10004001", {
-        userMessage: "Este título no tiene licencia para tu región en la versión internacional.",
-      });
-    }
-    if (c === 10004004 || c === 10004005 || c === 10023006) {
-      throw kino.error("auth_required", String(c), {
-        userMessage: "Este contenido necesita cuenta o suscripción en la app internacional.",
-      });
-    }
-    throw kino.error("unavailable", String(c), {
-      userMessage: "Bilibili internacional: " + String(data.message || c),
-    });
+    if (c === 10004001) throw kino.error("geo_blocked", "10004001", { userMessage: "Sin licencia para tu región." });
+    if (c === 10004004 || c === 10004005 || c === 10023006) throw kino.error("auth_required", String(c), { userMessage: "Necesita cuenta o suscripción." });
+    throw kino.error("unavailable", String(c), { userMessage: "Bilibili: " + String(data.message || c) });
   }
   return data.data;
 }
 
-function decodeJsonText(s) {
-  try {
-    return JSON.parse('"' + s + '"');
-  } catch {
-    return s;
-  }
-}
-
 async function intlSearch(q, cursor) {
   const pn = cursor ? Math.max(1, parseInt(cursor, 10) || 1) : 1;
-  const data = await intlJson(
-    INTL_API + "/v2/search_v2?keyword=" + encodeURIComponent(q) + "&platform=tv&s_locale=en_US&pn=" + pn + "&ps=20"
-  );
+  const data = await intlJson(INTL_API + "/v2/search_v2?keyword=" + encodeURIComponent(q) + "&platform=tv&s_locale=en_US&pn=" + pn + "&ps=20");
   const modules = (data && data.modules) || [];
   let out = [];
   const seen = new Set();
@@ -527,8 +476,7 @@ async function intlSearch(q, cursor) {
           id, ref: "s:" + it.season_id, title: cleanTitle(it.title), kind: "series",
           poster: posterUrl(it.cover), overview: cleanTitle(it.description || "").slice(0, 300),
           genres: (Array.isArray(it.styles) ? it.styles : []).slice(0, 5).map((g) => cleanTitle(g && g.title).slice(0, 30)).filter(Boolean),
-          badges: badges.slice(0, 3),
-          _priority: 1
+          badges: badges.slice(0, 3), _priority: 1
         });
       } else if (type === "ugc" && it && it.aid) {
         const id = "btv" + it.aid;
@@ -539,16 +487,13 @@ async function intlSearch(q, cursor) {
         if (dur) badges.push(dur);
         out.push({
           id, ref: "v:" + it.aid, title: cleanTitle(it.title), kind: "movie",
-          poster: posterUrl(it.cover), badges: badges.slice(0, 3),
-          _priority: 2
+          poster: posterUrl(it.cover), badges: badges.slice(0, 3), _priority: 2
         });
       }
     }
   }
-
   out.sort((a, b) => a._priority - b._priority);
   out = out.map(i => { delete i._priority; return i; });
-
   if (out.length && pn < 5) return { items: out, next: String(pn + 1) };
   return out;
 }
@@ -557,11 +502,12 @@ async function intlSearch(q, cursor) {
 // Catálogo Internacional
 // ---------------------------------------------------------------------------
 
+function decodeJsonText(s) { try { return JSON.parse('"' + s + '"'); } catch { return s; } }
+
 function parseAnimeHtml(html) {
   const out = [];
   const seen = new Set();
   const decoded = String(html).replace(/\\"/g, '"').replace(/&quot;/g, '"').replace(/&#34;/g, '"');
-
   const re = /"season_id"\s*:\s*"?(\d{1,12})"?/g;
   let m;
   while ((m = re.exec(decoded)) !== null) {
@@ -569,36 +515,27 @@ function parseAnimeHtml(html) {
     if (seen.has(id)) continue;
     const from = Math.max(0, m.index - 300);
     const win = decoded.slice(from, m.index + 300);
-    let best = null;
-    let bestDist = 1e9;
+    let best = null, bestDist = 1e9;
     const reT = /"title"\s*:\s*"((?:[^"\\]|\\.){1,200})"/g;
     let tm;
     while ((tm = reT.exec(win)) !== null) {
       const dist = Math.abs(from + tm.index - m.index);
-      if (dist < bestDist) {
-        bestDist = dist;
-        best = tm[1];
-      }
+      if (dist < bestDist) { bestDist = dist; best = tm[1]; }
     }
     if (!best) continue;
     const title = cleanTitle(decodeJsonText(best));
     if (!title) continue;
-    let poster;
-    let bestP = 1e9;
+    let poster, bestP = 1e9;
     const reP = /((?:https?:)?\/\/)?(pic\.bstarstatic\.com\/[^"\\ ]{10,400})/g;
     let pm2;
     while ((pm2 = reP.exec(win)) !== null) {
       const dist = Math.abs(from + pm2.index - m.index);
-      if (dist < bestP) {
-        bestP = dist;
-        poster = posterUrl(pm2[1] ? pm2[1] + pm2[2] : "https://" + pm2[2]);
-      }
+      if (dist < bestP) { bestP = dist; poster = posterUrl(pm2[1] ? pm2[1] + pm2[2] : "https://" + pm2[2]); }
     }
     seen.add(id);
     out.push({ id: "bts" + id, ref: "s:" + id, title, kind: "series", poster });
     if (out.length >= 80) break;
   }
-
   const reA = /<a[^>]+href="\/(?:[a-z]{2}\/)?play\/(\d{1,12})(?:\/\d{1,12})?[?"][^>]*>/g;
   while ((m = reA.exec(html)) !== null) {
     const id = m[1];
@@ -618,14 +555,9 @@ function parseAnimeHtml(html) {
 }
 
 function itemsViaSelect(html) {
-  const out = [];
-  const seen = new Set();
+  const out = [], seen = new Set();
   let matches;
-  try {
-    matches = kino.html.select(html, "a[href*='/play/']");
-  } catch {
-    return out;
-  }
+  try { matches = kino.html.select(html, "a[href*='/play/']"); } catch { return out; }
   if (!matches || !matches.length) return out;
   for (const el of matches) {
     const href = (el.attrs && el.attrs.href) || "";
@@ -650,12 +582,8 @@ function itemsViaSelect(html) {
 
 function itemsFromRenderedHtml(html) {
   const byRef = new Map();
-  for (const it of itemsViaSelect(html)) {
-    if (it.ref && !byRef.has(it.ref)) byRef.set(it.ref, it);
-  }
-  for (const it of parseAnimeHtml(html)) {
-    if (it.ref && !byRef.has(it.ref)) byRef.set(it.ref, it);
-  }
+  for (const it of itemsViaSelect(html)) if (it.ref && !byRef.has(it.ref)) byRef.set(it.ref, it);
+  for (const it of parseAnimeHtml(html)) if (it.ref && !byRef.has(it.ref)) byRef.set(it.ref, it);
   return Array.from(byRef.values());
 }
 
@@ -664,69 +592,29 @@ async function fetchPageViaBrowser(url, timeoutMs) {
   const label = url.replace(INTL_WEB, "");
   const t0 = Date.now();
   let page = null;
-  try {
-    page = await kino.browser.page(url, { waitFor: "/play/", timeoutMs: ms });
-  } catch (e) {
-    log("browser " + label + " falló: " + String(e && e.message ? e.message : e).slice(0, 100));
-    page = null;
-  }
+  try { page = await kino.browser.page(url, { waitFor: "/play/", timeoutMs: ms }); } catch (e) { page = null; }
   if ((!page || !page.html) && Date.now() - t0 < 6000) {
-    try {
-      page = await kino.browser.page(url, { waitFor: "/play/", timeoutMs: ms });
-    } catch (e) {
-      log("browser " + label + " reintento falló: " + String(e && e.message ? e.message : e).slice(0, 100));
-      page = null;
-    }
+    try { page = await kino.browser.page(url, { waitFor: "/play/", timeoutMs: ms }); } catch (e) { page = null; }
   }
-  if (!page || !page.html) {
-    log("browser " + label + " sin html");
-    return [];
-  }
-  const items = itemsFromRenderedHtml(page.html);
-  log("browser " + label + ": " + page.html.length + " chars, " + items.length + " series");
-  return items;
+  if (!page || !page.html) return [];
+  return itemsFromRenderedHtml(page.html);
 }
 
 async function fetchAnimePageItems() {
   try {
-    const r = await kino.fetch(INTL_WEB + "/en/anime", {
-      headers: intlHeaders({ Referer: INTL_WEB + "/en/", "User-Agent": UA }),
-      timeoutMs: 12000,
-    });
-    if (!r.ok) {
-      log("anime page HTTP " + r.status);
-      return [];
-    }
-    const text = r.text();
-    const items = parseAnimeHtml(text);
-    log("anime page " + text.length + " chars, " + items.length + " series");
-    return items;
-  } catch (e) {
-    log("anime page falló: " + String(e && e.message ? e.message : e).slice(0, 140));
-    return [];
-  }
+    const r = await kino.fetch(INTL_WEB + "/en/anime", { headers: intlHeaders({ Referer: INTL_WEB + "/en/", "User-Agent": UA }), timeoutMs: 12000 });
+    if (!r.ok) return [];
+    return parseAnimeHtml(r.text());
+  } catch (e) { return []; }
 }
 
 async function catalogSection(url, cacheKey, allowBrowser) {
   const cached = readCache(cacheKey);
-  if (cached && cached.length) {
-    return { items: cached, loaded: false };
-  }
+  if (cached && cached.length) return { items: cached, loaded: false };
   if (!allowBrowser) return { items: [], loaded: false };
-  if (failRecent(failKeyOf(url))) {
-    log("browser " + url.replace(INTL_WEB, "") + " en pausa (falló hace poco)");
-    return { items: [], loaded: false };
-  }
-
   let items = await fetchPageViaBrowser(url, url.indexOf("/popular") >= 0 ? 9000 : 12000);
-  if (!items.length && url.indexOf("/anime") >= 0) {
-    items = await fetchAnimePageItems();
-  }
-  if (items.length >= 4) {
-    writeCache(cacheKey, items);
-    return { items, loaded: true };
-  }
-  setFailMarker(failKeyOf(url));
+  if (!items.length && url.indexOf("/anime") >= 0) items = await fetchAnimePageItems();
+  if (items.length >= 4) { writeCache(cacheKey, items); return { items, loaded: true }; }
   return { items, loaded: true };
 }
 
@@ -736,8 +624,7 @@ const HOME_KEYWORDS = [
 ];
 
 async function destacadasAll() {
-  const out = [];
-  const seen = new Set();
+  const out = [], seen = new Set();
   const responses = await Promise.all(HOME_KEYWORDS.map((kw) => intlSearch(kw, null).catch(() => null)));
   for (const res of responses) {
     if (!res) continue;
@@ -745,11 +632,7 @@ async function destacadasAll() {
     let added = 0;
     for (const it of items) {
       if (added >= 4) break;
-      if (it && it.kind === "series" && it.ref && !seen.has(it.ref)) {
-        seen.add(it.ref);
-        out.push(it);
-        added++;
-      }
+      if (it && it.kind === "series" && it.ref && !seen.has(it.ref)) { seen.add(it.ref); out.push(it); added++; }
     }
   }
   return out;
@@ -765,52 +648,35 @@ async function destacadasCached(allowNet) {
 }
 
 async function enrichItems(items, max) {
-  const out = items.slice();
-  const targets = [];
+  const out = items.slice(), targets = [];
   for (const it of out) {
     if (targets.length >= (max || 30)) break;
-    if (it && it.ref && it.ref.startsWith("s:") && !(it.genres && it.genres.length)) {
-      targets.push(it);
-    }
+    if (it && it.ref && it.ref.startsWith("s:") && !(it.genres && it.genres.length)) targets.push(it);
   }
   if (!targets.length) return out;
-  await Promise.all(
-    targets.map(async (it) => {
-      try {
-        const info = await intlJson(INTL_API + "/v2/ogv/play/season_info?season_id=" + encodeURIComponent(it.ref.slice(2)) + "&platform=web");
-        const season = (info && info.season) || {};
-        const genres = (Array.isArray(season.styles) ? season.styles : []).slice(0, 5).map((g) => cleanTitle(g && g.title).slice(0, 30)).filter(Boolean);
-        if (genres.length) {
-          it.genres = genres;
-          if (!it.badges || !it.badges.length) it.badges = genres.slice(0, 3);
-        }
-        const desc = cleanTitle(season.description || "").slice(0, 300);
-        if (desc && !it.overview) it.overview = desc;
-      } catch {}
-    })
-  );
+  await Promise.all(targets.map(async (it) => {
+    try {
+      const info = await intlJson(INTL_API + "/v2/ogv/play/season_info?season_id=" + encodeURIComponent(it.ref.slice(2)) + "&platform=web");
+      const season = (info && info.season) || {};
+      const genres = (Array.isArray(season.styles) ? season.styles : []).slice(0, 5).map((g) => cleanTitle(g && g.title).slice(0, 30)).filter(Boolean);
+      if (genres.length) { it.genres = genres; if (!it.badges || !it.badges.length) it.badges = genres.slice(0, 3); }
+      const desc = cleanTitle(season.description || "").slice(0, 300);
+      if (desc && !it.overview) it.overview = desc;
+    } catch {}
+  }));
   return out;
 }
 
 function mergeItems() {
   const byRef = new Map();
   for (const group of arguments) {
-    for (const it of group || []) {
-      if (it && it.ref && !byRef.has(it.ref)) byRef.set(it.ref, it);
-    }
+    for (const it of group || []) if (it && it.ref && !byRef.has(it.ref)) byRef.set(it.ref, it);
   }
   return Array.from(byRef.values());
 }
 
-const GENRE_ES = {
-  Action: "Acción", Adventure: "Aventura", Comedy: "Comedia", Romance: "Romance", Fantasy: "Fantasía", Mystery: "Misterio", Suspense: "Suspense", Drama: "Drama", "Sci-Fi": "Ciencia ficción", "Slice of Life": "Vida cotidiana", Sports: "Deportes", School: "Escolar", Historical: "Histórico", "Martial Arts": "Artes marciales", Horror: "Terror", Isekai: "Isekai", Harem: "Harem", "Chinese Style": "Estilo chino", "Hot-blooded": "De sangre caliente", "Boys Love": "Boys love", "Girls Love": "Girls love",
-};
-
+const GENRE_ES = { Action: "Acción", Adventure: "Aventura", Comedy: "Comedia", Romance: "Romance", Fantasy: "Fantasía", Mystery: "Misterio", Suspense: "Suspense", Drama: "Drama", "Sci-Fi": "Ciencia ficción", "Slice of Life": "Vida cotidiana", Sports: "Deportes", School: "Escolar", Historical: "Histórico", "Martial Arts": "Artes marciales", Horror: "Terror", Isekai: "Isekai", Harem: "Harem", "Chinese Style": "Estilo chino", "Hot-blooded": "De sangre caliente", "Boys Love": "Boys love", "Girls Love": "Girls love" };
 const GENRE_SKIP = { Anime: 1, Movies: 1, TV: 1, Film: 1, "TV Shows": 1 };
-
-function genreLabelES(g) {
-  return GENRE_ES[g] || g;
-}
 
 function genreSections(pool) {
   const byGenre = new Map();
@@ -832,44 +698,23 @@ function genreSections(pool) {
 }
 
 async function intlHome() {
-  const rows = [];
-  const t0 = Date.now();
-
+  const rows = [], t0 = Date.now();
   const anime = await catalogSection(INTL_WEB + "/en/anime", "cache:anime", true);
-  if (anime.items.length >= 4) {
-    rows.push({ id: "bts-anime", title: "Anime en Bilibili internacional", items: anime.items.slice(0, 20), ref: "browse:anime", genre: "anime" });
-  }
+  if (anime.items.length >= 4) rows.push({ id: "bts-anime", title: "Anime en Bilibili internacional", items: anime.items.slice(0, 20), ref: "browse:anime", genre: "anime" });
 
   let popularAllow = !anime.loaded;
   if (anime.loaded && !anime.items.length && Date.now() - t0 < 16000) popularAllow = true;
   const popular = await catalogSection(INTL_WEB + "/en/popular", "cache:popular", popularAllow);
-  if (popular.items.length >= 4) {
-    rows.push({ id: "bts-popular", title: "Tendencias de Bilibili", items: popular.items.slice(0, 20), ref: "browse:popular" });
-  }
+  if (popular.items.length >= 4) rows.push({ id: "bts-popular", title: "Tendencias de Bilibili", items: popular.items.slice(0, 20), ref: "browse:popular" });
 
   const destacadas = await destacadasCached(true);
-
   const pool = mergeItems(anime.items, popular.items, destacadas);
   for (const g of genreSections(pool).slice(0, 4)) {
-    rows.push({
-      id: "bts-genre-" + g.genre.replace(/[^a-z0-9]+/gi, "-").slice(0, 20),
-      title: genreLabelES(g.genre),
-      items: g.items.slice(0, 20),
-      ref: "browse:g:" + encodeURIComponent(g.genre),
-    });
+    rows.push({ id: "bts-genre-" + g.genre.replace(/[^a-z0-9]+/gi, "-").slice(0, 20), title: GENRE_ES[g.genre] || g.genre, items: g.items.slice(0, 20), ref: "browse:g:" + encodeURIComponent(g.genre) });
   }
-
-  if (destacadas.length) {
-    rows.push({ id: "bts-destacadas", title: "Series destacadas", items: destacadas.slice(0, 20), ref: "browse:catalog" });
-  }
-
-  log("home v0.8.1: " + (rows.length ? rows.map((r) => r.title + " " + r.items.length).join(" | ") : "sin filas"));
-
+  if (destacadas.length) rows.push({ id: "bts-destacadas", title: "Series destacadas", items: destacadas.slice(0, 20), ref: "browse:catalog" });
   if (rows.length) return rows;
-
-  throw kino.error("unavailable", "home vacío", {
-    userMessage: "No se pudo cargar el catálogo. La búsqueda sí funciona: busca un título (por ejemplo LINK CLICK).",
-  });
+  throw kino.error("unavailable", "home vacío", { userMessage: "No se pudo cargar el catálogo." });
 }
 
 function qLabel(q) {
@@ -887,11 +732,7 @@ async function intlSubtitles(epId) {
     const url = sub.url || (sub.srt && sub.srt.url) || (sub.ass && sub.ass.url);
     if (!url || !/^https:\/\//.test(url)) continue;
     if (!/\.srt(\?|$)/i.test(url)) continue;
-    out.push({
-      lang: cleanTitle(sub.lang_key || "en").slice(0, 20) || "en",
-      url,
-      format: "srt",
-    });
+    out.push({ lang: cleanTitle(sub.lang_key || "en").slice(0, 20) || "en", url, format: "srt" });
     if (out.length >= 30) break;
   }
   return out;
@@ -901,61 +742,26 @@ async function intlResolve(kind, id) {
   const param = kind === "e" ? "ep_id" : "aid";
   const data = await intlJson(INTL_API + "/playurl?s_locale=en_US&platform=web&" + param + "=" + encodeURIComponent(id));
   const p = data && data.playurl;
-  if (!p) {
-    throw kino.error("not_found", "no playurl", {
-      userMessage: "No se encontró el video en la versión internacional.",
-    });
-  }
+  if (!p) throw kino.error("not_found", "no playurl", { userMessage: "No se encontró el video." });
 
-  const vids = (Array.isArray(p.video) ? p.video : [])
-    .map((x) => (x && x.video_resource) || x || {})
-    .filter((v) => v && v.url && /^https:\/\//.test(v.url))
-    .sort((a, b) => (b.quality || 0) - (a.quality || 0));
+  const vids = (Array.isArray(p.video) ? p.video : []).map((x) => (x && x.video_resource) || x || {}).filter((v) => v && v.url && /^https:\/\//.test(v.url)).sort((a, b) => (b.quality || 0) - (a.quality || 0));
+  if (!vids.length) throw kino.error("unavailable", "no free urls", { userMessage: "No hay enlaces libres." });
 
-  if (!vids.length) {
-    throw kino.error("unavailable", "no free urls", {
-      userMessage: "No hay enlaces libres para este contenido (puede ser exclusivo para suscriptores).",
-    });
-  }
-
-  const auds = (Array.isArray(p.audio_resource) ? p.audio_resource : [])
-    .filter((a) => a && a.url && /^https:\/\//.test(a.url))
-    .sort((a, b) => (b.bandwidth || 0) - (a.bandwidth || 0));
-
+  const auds = (Array.isArray(p.audio_resource) ? p.audio_resource : []).filter((a) => a && a.url && /^https:\/\//.test(a.url)).sort((a, b) => (b.bandwidth || 0) - (a.bandwidth || 0));
   const headers = { "User-Agent": INTL_UA, Referer: INTL_WEB + "/" };
-
-  const stream = {
-    url: vids[0].url,
-    mime: "video/mp4",
-    headers,
-    label: qLabel(vids[0].quality),
-  };
+  const stream = { url: vids[0].url, mime: "video/mp4", headers, label: qLabel(vids[0].quality) };
   if (p.duration) stream.durationMs = p.duration;
-  if (auds.length) {
-    stream.audioTracks = [{ lang: "zh", url: auds[0].url, label: "Original" }];
-  }
-  if (vids.length > 1) {
-    stream.alternatives = vids.slice(1, 8).map((v) => ({
-      url: v.url,
-      mime: "video/mp4",
-      headers,
-      label: qLabel(v.quality),
-    }));
-  }
+  if (auds.length) stream.audioTracks = [{ lang: "zh", url: auds[0].url, label: "Original" }];
+  if (vids.length > 1) stream.alternatives = vids.slice(1, 8).map((v) => ({ url: v.url, mime: "video/mp4", headers, label: qLabel(v.quality) }));
 
   if (kind === "e") {
-    try {
-      const subs = await intlSubtitles(id);
-      if (subs.length) stream.subtitles = subs;
-    } catch (e) {
-      log("subs fail", e && e.message);
-    }
+    try { const subs = await intlSubtitles(id); if (subs.length) stream.subtitles = subs; } catch (e) {}
   }
   return stream;
 }
 
 // ---------------------------------------------------------------------------
-// Exportaciones del contrato
+// Exportaciones
 // ---------------------------------------------------------------------------
 
 export async function search(query) {
@@ -978,19 +784,13 @@ export async function browse(ref, cursor) {
     const anime = await catalogSection(INTL_WEB + "/en/anime", "cache:anime", true);
     items = anime.items;
     if (!items.length) items = await destacadasCached(true);
-    log("browse anime: " + items.length);
     const enriched = await enrichItems(items, 25);
     if (anime.items.length) writeCache("cache:anime", anime.items, 60);
     return { items: enriched.slice(0, 100), next: null };
   }
   if (r === "browse:popular") {
     const popular = await catalogSection(INTL_WEB + "/en/popular", "cache:popular", true);
-    log("browse popular: " + popular.items.length);
-    if (!popular.items.length) {
-      throw kino.error("unavailable", "tendencias vacías", {
-        userMessage: "Tendencias no pudo cargar ahora mismo. Vuelve al inicio e inténtalo de nuevo en unos minutos.",
-      });
-    }
+    if (!popular.items.length) throw kino.error("unavailable", "tendencias vacías", { userMessage: "Tendencias no pudo cargar." });
     const enrichedPop = await enrichItems(popular.items, 25);
     writeCache("cache:popular", popular.items, 60);
     return { items: enrichedPop.slice(0, 100), next: null };
@@ -1000,12 +800,7 @@ export async function browse(ref, cursor) {
     const pool = await destacadasCached(true);
     const sec = genreSections(pool).find((s) => s.genre === genre);
     const items = sec ? sec.items : [];
-    log("browse genero " + genre + ": " + items.length);
-    if (!items.length) {
-      throw kino.error("unavailable", "genero vacio", {
-        userMessage: "Esta sección todavía no tiene series. Vuelve al inicio y vuelve a entrar en un rato.",
-      });
-    }
+    if (!items.length) throw kino.error("unavailable", "genero vacio", { userMessage: "Esta sección aún no tiene series." });
     const enriched = await enrichItems(items, 25);
     writeCache("cache:destacadas2", pool, 120);
     return { items: enriched.slice(0, 100), next: null };
@@ -1015,12 +810,7 @@ export async function browse(ref, cursor) {
     const popular = await catalogSection(INTL_WEB + "/en/popular", "cache:popular", !anime.loaded);
     const destacadas = await destacadasCached(true);
     const all = mergeItems(anime.items, popular.items, destacadas);
-    log("browse catalogo: " + all.length);
-    if (!all.length) {
-      throw kino.error("unavailable", "catálogo vacío", {
-        userMessage: "El catálogo completo aún se está cargando. Vuelve al inicio, espera un momento y vuelve a entrar.",
-      });
-    }
+    if (!all.length) throw kino.error("unavailable", "catálogo vacío", { userMessage: "El catálogo aún se está cargando." });
     const enriched = await enrichItems(all, 25);
     writeCache("cache:destacadas2", all, 120);
     return { items: enriched.slice(0, 100), next: null };
@@ -1035,7 +825,6 @@ export async function episodes(ref) {
 
   const info = await intlJson(INTL_API + "/v2/ogv/play/season_info?season_id=" + encodeURIComponent(seasonId) + "&platform=web");
   const season = (info && info.season) || {};
-
   const epsData = await intlJson(INTL_API + "/v2/ogv/play/episodes?season_id=" + encodeURIComponent(seasonId) + "&platform=web");
   const sections = (epsData && epsData.sections) || [];
 
@@ -1052,32 +841,16 @@ export async function episodes(ref) {
       let title = cleanTitle(ep.long_title_display || ep.title_display) || "Capítulo " + num;
       const limitText = cleanTitle(ep.limit_text).slice(0, 12);
       if (ep.limit && limitText) title += " · " + limitText;
-      episodes.push({
-        season: si + 1,
-        number: num,
-        ref: "e:" + ep.episode_id,
-        title,
-        still: posterUrl(ep.cover),
-      });
+      episodes.push({ season: si + 1, number: num, ref: "e:" + ep.episode_id, title, still: posterUrl(ep.cover) });
     }
   });
 
-  if (!episodes.length) {
-    throw kino.error("not_found", "sin episodios", {
-      userMessage: "No se encontraron episodios para esta serie.",
-    });
-  }
-
+  if (!episodes.length) throw kino.error("not_found", "sin episodios", { userMessage: "No se encontraron episodios." });
   return {
     series: {
-      title: cleanTitle(season.title),
-      poster: posterUrl(season.cover),
-      backdrop: posterUrl(season.horizontal_cover),
+      title: cleanTitle(season.title), poster: posterUrl(season.cover), backdrop: posterUrl(season.horizontal_cover),
       overview: cleanTitle(season.description || "").slice(0, 2000),
-      genres: (Array.isArray(season.styles) ? season.styles : [])
-        .slice(0, 5)
-        .map((g) => cleanTitle(g && g.title).slice(0, 30))
-        .filter(Boolean),
+      genres: (Array.isArray(season.styles) ? season.styles : []).slice(0, 5).map((g) => cleanTitle(g && g.title).slice(0, 30)).filter(Boolean),
     },
     episodes,
   };
@@ -1088,4 +861,4 @@ export async function resolve(ref) {
   if (s.startsWith("e:")) return intlResolve("e", s.slice(2));
   if (s.startsWith("v:")) return intlResolve("v", s.slice(2));
   return cnResolve(s);
-}
+      }
