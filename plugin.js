@@ -1,7 +1,5 @@
-// Bilibili — plugin para Kino v0.8.0
-// - Añadido soporte para visualBrowser (apiVersion 20).
-// - Nueva acción "link_account" para iniciar sesión en Bilibili y capturar SESSDATA.
-// - getJson ahora usa la cookie guardada para evitar el bloqueo 412.
+// Bilibili — plugin para Kino v0.8.1
+// - Corregido el visualBrowser para que no se cierre antes de iniciar sesión.
 
 const API = "https://api.bilibili.com";
 const WEB = "https://www.bilibili.com";
@@ -227,20 +225,19 @@ async function getJson(url) {
   return data;
 }
 
-// --- INICIO: Nueva acción para vincular la cuenta ---
+// --- INICIO: Acción para vincular la cuenta ---
 export async function action(key) {
   if (key !== "link_account") return;
   if (!kino.visualBrowser?.available) {
     return { message: "El navegador visual no está disponible. Pega la cookie SESSDATA a mano en el campo de abajo." };
   }
 
-  // Abrimos la ventana de login de Bilibili.
-  // Al terminar, Kino guardará automáticamente la cookie SESSDATA.
   const r = await kino.visualBrowser.open({
     url: "https://passport.bilibili.com/login",
     title: "Iniciar sesión en Bilibili",
     userAgent: "browser",
-    doneWhen: { urlMatches: "*bilibili.com*" },
+    // Espera a la página principal, no al dominio del login
+    doneWhen: { urlMatches: "*www.bilibili.com*" },
     collect: {
       cookies: ["SESSDATA"],
       storeAs: {
@@ -248,7 +245,7 @@ export async function action(key) {
         format: "header",
       },
     },
-    timeoutMs: 600000, // 10 minutos
+    timeoutMs: 600000,
   });
 
   if (r.status === "done" && r.stored) {
@@ -419,7 +416,7 @@ async function cnResolve(ref) {
 }
 
 // ---------------------------------------------------------------------------
-// Modo internacional (bilibili.tv) - Se mantiene igual
+// Modo internacional (bilibili.tv)
 // ---------------------------------------------------------------------------
 
 let intlBuvidCache = null;
@@ -557,7 +554,7 @@ async function intlSearch(q, cursor) {
 }
 
 // ---------------------------------------------------------------------------
-// Catálogo Internacional (sin cambios)
+// Catálogo Internacional
 // ---------------------------------------------------------------------------
 
 function parseAnimeHtml(html) {
@@ -866,7 +863,7 @@ async function intlHome() {
     rows.push({ id: "bts-destacadas", title: "Series destacadas", items: destacadas.slice(0, 20), ref: "browse:catalog" });
   }
 
-  log("home v0.8.0: " + (rows.length ? rows.map((r) => r.title + " " + r.items.length).join(" | ") : "sin filas"));
+  log("home v0.8.1: " + (rows.length ? rows.map((r) => r.title + " " + r.items.length).join(" | ") : "sin filas"));
 
   if (rows.length) return rows;
 
@@ -1091,4 +1088,4 @@ export async function resolve(ref) {
   if (s.startsWith("e:")) return intlResolve("e", s.slice(2));
   if (s.startsWith("v:")) return intlResolve("v", s.slice(2));
   return cnResolve(s);
-      }
+}
