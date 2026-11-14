@@ -1,7 +1,7 @@
 {
   "id": "bilibili",
   "name": "Bilibili",
-  "version": "1.0.9",
+  "version": "1.1.0",
   "apiVersion": 23,
   "entry": "plugin.js",
   "description": "Bilibili con Historial, Favoritos, Trakt, Descargas, Temas y múltiples secciones.",
@@ -16,8 +16,7 @@
     "www.bilibili.tv",
     "*.bilibili.tv",
     "*.akamaized.net",
-    "passport.bilibili.com",
-    "api.qrserver.com"
+    "passport.bilibili.com"
   ],
   "streamHosts": "any",
   "capabilities": [
