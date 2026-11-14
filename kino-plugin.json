@@ -1,7 +1,7 @@
 {
   "id": "bilibili",
   "name": "Bilibili",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "apiVersion": 23,
   "entry": "plugin.js",
   "description": "Bilibili con historial, favoritos, Trakt, descargas, temas y ventana de navegador para iniciar sesión.",
