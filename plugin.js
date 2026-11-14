@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-// Kino plugin: Bilibili v1.0.9
+// Kino plugin: Bilibili v1.1.1
 // Integración completa con las funciones de Kino (v23) y secciones extra.
 
 const API = "https://api.bilibili.com";
@@ -332,12 +332,9 @@ export async function action(key) {
       const qrcodeKey = genData.data.qrcode_key;
       const qrUrl = genData.data.url;
 
-      // 2. Crear la URL de la imagen usando un generador de QR público
-      const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(qrUrl)}`;
-
       let sessdataFinal = null;
 
-      // 3. Iniciar el Polling (verificación en segundo plano)
+      // 2. Iniciar el Polling (verificación en segundo plano)
       const pollPromise = (async () => {
         for (let i = 0; i < 60; i++) {
           await new Promise(r => setTimeout(r, 2000)); // Esperar 2 segundos
@@ -365,19 +362,21 @@ export async function action(key) {
         }
       })();
 
-      // 4. Mostrar la imagen del QR en el navegador visual
+      // 3. Abrir el navegador visual con la URL nativa del QR de Bilibili.
+      // Al usar un User-Agent de escritorio, Bilibili mostrará la página con el QR en lugar de la vista móvil.
       await kino.visualBrowser.open({
-        url: qrImageUrl,
-        title: t("Escanea este código QR con la app de Bilibili", "Scan this QR code with the Bilibili app"),
-        timeoutMs: 120000, // 2 minutos máximo
+        url: qrUrl,
+        title: t("Escanea este código QR con tu app", "Scan this QR code with your app"),
+        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        timeoutMs: 120000, 
       });
 
-      // 5. Cuando se cierra el navegador, verificamos si el polling tuvo éxito
+      // 4. Al cerrar el navegador, verificar el resultado
       if (sessdataFinal) {
         kino.config.set("sessdata", sessdataFinal);
-        return { message: t("¡Inicio de sesión exitoso con código QR!", "QR login successful!") };
+        return { message: t("¡Cuenta vinculada con QR!", "Account linked with QR!") };
       } else {
-        return { message: t("El código QR expiró o se canceló.", "QR code expired or cancelled.") };
+        return { message: t("El QR expiró o se canceló.", "QR expired or cancelled.") };
       }
 
     } catch (e) {
@@ -1149,7 +1148,7 @@ async function intlHome() {
   const kwRows = await Promise.all(kwPromises);
   rows.push(...kwRows.filter((r) => r !== null));
 
-  log("home v1.0.9: " + (rows.length ? rows.map((r) => r.title + " " + r.items.length).join(" | ") : "sin filas"));
+  log("home v1.1.1: " + (rows.length ? rows.map((r) => r.title + " " + r.items.length).join(" | ") : "sin filas"));
 
   if (rows.length) return rows;
   throw kino.error("unavailable", "home vacío", { userMessage: t("No se pudo cargar el catálogo.", "Could not load catalog.") });
