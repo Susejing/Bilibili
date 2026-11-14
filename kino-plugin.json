@@ -16,7 +16,8 @@
     "www.bilibili.tv",
     "*.bilibili.tv",
     "*.akamaized.net",
-    "passport.bilibili.com"
+    "passport.bilibili.com",
+    "api.qrserver.com"
   ],
   "streamHosts": "any",
   "capabilities": [
@@ -43,12 +44,12 @@
     },
     {
       "key": "link_account",
-      "label": "Vincular cuenta (Usuario/Contraseña)",
+      "label": "Vincular cuenta (Navegador)",
       "type": "action"
     },
     {
       "key": "qr_login",
-      "label": "Vincular cuenta (Código QR)",
+      "label": "Vincular cuenta (Escanear QR)",
       "type": "action"
     },
     {
