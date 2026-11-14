@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-// Kino plugin: Bilibili v1.0.5
+// Kino plugin: Bilibili v1.0.6
 // Integración completa con las funciones de Kino (v23).
 
 const API = "https://api.bilibili.com";
@@ -79,7 +79,7 @@ function decodeJsonText(s) {
 }
 
 // ---------------------------------------------------------------------------
-// Tema Visual
+// Tema Visual (API v23)
 // ---------------------------------------------------------------------------
 
 export function theme() {
@@ -90,7 +90,7 @@ export function theme() {
 }
 
 // ---------------------------------------------------------------------------
-// Memoria (6 h) para que el catálogo cargue rápido
+// Memoria (6 h) y Caché de Fallos
 // ---------------------------------------------------------------------------
 
 function readCache(key) {
@@ -1051,7 +1051,7 @@ async function intlHome() {
     });
   }
 
-  log("home v1.0.5: " + (rows.length ? rows.map((r) => r.title + " " + r.items.length).join(" | ") : "sin filas"));
+  log("home v1.0.6: " + (rows.length ? rows.map((r) => r.title + " " + r.items.length).join(" | ") : "sin filas"));
 
   if (rows.length) return rows;
   throw kino.error("unavailable", "home vacío", { userMessage: t("No se pudo cargar el catálogo.", "Could not load catalog.") });
@@ -1162,7 +1162,8 @@ export async function segments(ref) {
   }
 }
 
-export async function tracking(ref, action) {
+// 🌟 AQUÍ ESTÁ LA CORRECCIÓN: El nombre de la función es "track", no "tracking"
+export async function track(ref, action) {
   if (String(kino.config.get("trakt_sync") || "true") === "false") return;
   try {
     await kino.trakt.sync({ action, ref });
@@ -1315,4 +1316,4 @@ export async function resolve(ref) {
   if (s.startsWith("e:")) return intlResolve("e", s.slice(2));
   if (s.startsWith("v:")) return intlResolve("v", s.slice(2));
   return cnResolve(s);
-  }
+                                                             }
