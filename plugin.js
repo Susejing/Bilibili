@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-// Kino plugin: Bilibili v1.0.8
+// Kino plugin: Bilibili v1.0.9
 // Integración completa con las funciones de Kino (v23) y secciones extra.
 
 const API = "https://api.bilibili.com";
