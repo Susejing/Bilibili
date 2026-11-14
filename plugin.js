@@ -14,8 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-// Kino plugin: Bilibili v1.0.6
-// Integración completa con las funciones de Kino (v23).
+// Kino plugin: Bilibili v1.0.7
+// Integración completa con las funciones de Kino (v23) y secciones extra.
 
 const API = "https://api.bilibili.com";
 const WEB = "https://www.bilibili.com";
@@ -32,7 +32,7 @@ const INTL_UA =
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
-// Funciones de Utilidad
+// Utilidades Generales
 // ---------------------------------------------------------------------------
 
 function log(...args) {
@@ -42,7 +42,8 @@ function log(...args) {
 }
 
 function t(es, en) {
-  return kino.lang === "es" ? es : en;
+  const lang = String(kino.lang || "es").toLowerCase();
+  return lang.startsWith("es") ? es : en;
 }
 
 function mode() {
@@ -58,8 +59,8 @@ function sessdata() {
   return s;
 }
 
-function cleanTitle(t) {
-  return String(t || "").replace(/<[^>]+>/g, "").trim();
+function cleanTitle(title) {
+  return String(title || "").replace(/<[^>]+>/g, "").trim();
 }
 
 function posterUrl(pic) {
@@ -216,7 +217,9 @@ function baseHeaders(extra) {
   const ck = cookieHeader();
   if (ck) h.Cookie = ck;
   if (extra) {
-    for (const k in extra) h[k] = extra[k];
+    for (const k in extra) {
+      h[k] = extra[k];
+    }
   }
   return h;
 }
@@ -437,6 +440,27 @@ export async function scopedSearch(query, scope) {
 }
 
 // ---------------------------------------------------------------------------
+// Búsqueda por Palabra Clave para Secciones (China)
+// ---------------------------------------------------------------------------
+
+async function cnKeywordRow(keyword, title) {
+  try {
+    const url = API + "/x/web-interface/search/type?search_type=video&keyword=" + encodeURIComponent(keyword);
+    const data = await getJson(url);
+    const list = data.data?.result || [];
+    if (!list.length) return null;
+    return {
+      id: "search_" + keyword,
+      title: title,
+      items: list.slice(0, 20).map(toVideoItem),
+      ref: "browse:keyword:" + encodeURIComponent(keyword),
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Inicio (Home) Modo China
 // ---------------------------------------------------------------------------
 
@@ -455,19 +479,26 @@ async function cnHome() {
     if (recommended.length > 0) rows.push({ id: "rec", title: t("✨ Recomendado para ti", "✨ Recommended for you"), items: recommended });
   }
 
+  // Rankings oficiales (rid)
   const urls = [
-    { id: "popular", title: t("Populares en Bilibili", "Popular on Bilibili"), url: API + "/x/web-interface/ranking/v2?rid=0&type=all" },
-    { id: "anime", title: t("Anime en Tendencia", "Trending Anime"), url: API + "/x/web-interface/ranking/v2?rid=1&type=all" },
-    { id: "series", title: t("Series y Bangumi", "Series & Bangumi"), url: API + "/x/web-interface/ranking/v2?rid=13&type=all" },
-    { id: "cinema", title: t("Cine y Películas", "Cinema & Movies"), url: API + "/x/web-interface/ranking/v2?rid=23&type=all" },
+    { id: "popular", title: t("🔥 Populares", "🔥 Popular"), url: API + "/x/web-interface/ranking/v2?rid=0&type=all" },
+    { id: "anime", title: t("🌸 Anime (Bangumi)", "🌸 Anime (Bangumi)"), url: API + "/x/web-interface/ranking/v2?rid=13&type=all" },
+    { id: "cinema", title: t("🎬 Cine y Películas", "🎬 Cinema & Movies"), url: API + "/x/web-interface/ranking/v2?rid=23&type=all" },
+    { id: "doramas", title: t("📺 Doramas y Series", "📺 Doramas & TV Series"), url: API + "/x/web-interface/ranking/v2?rid=11&type=all" },
+    { id: "amv", title: t("🎵 AMV y MAD", "🎵 AMV & MAD"), url: API + "/x/web-interface/ranking/v2?rid=1&type=all" },
+    { id: "games", title: t("🎮 Juegos y Galgames", "🎮 Games & Galgames"), url: API + "/x/web-interface/ranking/v2?rid=4&type=all" }
   ];
 
   const promises = urls.map(async (u) => {
     try {
       const data = await getJson(u.url);
-      const list = (data.data && data.data.list) || [];
-      if (list.length > 0) {
-        return { id: u.id, title: u.title, items: list.slice(0, 20).map(toVideoItem) };
+      if (data.data?.list?.length) {
+        return {
+          id: u.id,
+          title: u.title,
+          items: data.data.list.slice(0, 20).map(toVideoItem),
+          ref: "browse:rid:" + u.id,
+        };
       }
     } catch (e) {
       log("Error cargando fila " + u.title + ": " + e.message);
@@ -475,8 +506,16 @@ async function cnHome() {
     return null;
   });
 
+  // Sección especial de Donghua (Animación China)
+  const donghuaPromise = cnKeywordRow("国创", t("🐉 Donghua (Animación China)", "🐉 Donghua (Chinese Animation)"));
+
   const generalRows = await Promise.all(promises);
-  return rows.concat(generalRows.filter((r) => r !== null));
+  rows.push(...generalRows.filter((r) => r !== null));
+
+  const donghua = await donghuaPromise;
+  if (donghua) rows.push(donghua);
+
+  return rows;
 }
 
 // ---------------------------------------------------------------------------
@@ -856,35 +895,8 @@ async function catalogSection(url, cacheKey, allowBrowser) {
 }
 
 const HOME_KEYWORDS = [
-  "LINK CLICK",
-  "Healer Girl",
-  "Love All Play",
-  "RPG Real Estate",
-  "Estab-Life",
-  "Girls Band Cry",
-  "BanG Dream",
-  "Battle Through the Heavens",
-  "Soul Land",
-  "Throne of Seal",
-  "The King's Avatar",
-  "Heaven Official Blessing",
-  "To Your Eternity",
-  "The Faraway Paladin",
-  "Shangri-La Frontier",
-  "Summer Time Rendering",
-  "Scissor Seven",
-  "White Cat Legend",
-  "Qi Refining for 3000 Years",
-  "Carp Reborn",
-  "A World Worth Protecting",
-  "Rakshasa Street",
-  "Spirits In Chinese Brushes",
-  "The Invincible",
-  "God Troubles Me",
-  "Cinderella Chef",
-  "The Eternal Strife",
-  "The Story of Fengzhi Senla",
-  "Master of the Star Spring",
+  "LINK CLICK", "Healer Girl", "Love All Play", "RPG Real Estate", "Estab-Life", "Girls Band Cry", "BanG Dream", "Battle Through the Heavens", "Soul Land", "Throne of Seal", "The King's Avatar", "Heaven Official Blessing", "To Your Eternity", "The Faraway Paladin", "Shangri-La Frontier", "Summer Time Rendering", "Scissor Seven", "White Cat Legend",
+  "Qi Refining for 3000 Years", "Carp Reborn", "A World Worth Protecting", "Rakshasa Street", "Spirits In Chinese Brushes", "The Invincible", "God Troubles Me", "Cinderella Chef", "The Eternal Strife", "The Story of Fengzhi Senla", "Master of the Star Spring",
 ];
 
 async function destacadasAll() {
@@ -1011,7 +1023,7 @@ async function intlHome() {
   if (anime.items.length >= 4) {
     rows.push({
       id: "bts-anime",
-      title: t("Anime en Bilibili internacional", "Anime on Bilibili International"),
+      title: t("Anime", "Anime"),
       items: anime.items.slice(0, 20),
       ref: "browse:anime",
       genre: "anime",
@@ -1024,7 +1036,7 @@ async function intlHome() {
   if (popular.items.length >= 4) {
     rows.push({
       id: "bts-popular",
-      title: t("Tendencias de Bilibili", "Bilibili Trending"),
+      title: t("Tendencias", "Trending"),
       items: popular.items.slice(0, 20),
       ref: "browse:popular",
     });
@@ -1045,13 +1057,32 @@ async function intlHome() {
   if (destacadas.length) {
     rows.push({
       id: "bts-destacadas",
-      title: t("Series destacadas", "Featured Series"),
+      title: t("Destacadas", "Featured"),
       items: destacadas.slice(0, 20),
       ref: "browse:catalog",
     });
   }
 
-  log("home v1.0.6: " + (rows.length ? rows.map((r) => r.title + " " + r.items.length).join(" | ") : "sin filas"));
+  // Secciones nuevas por palabra clave para internacional
+  const intlKeywords = [
+    { id: "doramas", title: t("📺 Doramas", "📺 Doramas"), keyword: "dorama" },
+    { id: "donghua", title: t("🐉 Donghua", "🐉 Donghua"), keyword: "donghua" },
+    { id: "amv", title: t("🎵 AMV", "🎵 AMV"), keyword: "amv" }
+  ];
+
+  const kwPromises = intlKeywords.map(async (k) => {
+    try {
+      const res = await intlSearch(k.keyword, null);
+      const items = Array.isArray(res) ? res : res.items || [];
+      if (items.length > 0) return { id: k.id, title: k.title, items: items.slice(0, 20), ref: "browse:keyword:" + encodeURIComponent(k.keyword) };
+    } catch (e) {}
+    return null;
+  });
+
+  const kwRows = await Promise.all(kwPromises);
+  rows.push(...kwRows.filter((r) => r !== null));
+
+  log("home v1.0.7: " + (rows.length ? rows.map((r) => r.title + " " + r.items.length).join(" | ") : "sin filas"));
 
   if (rows.length) return rows;
   throw kino.error("unavailable", "home vacío", { userMessage: t("No se pudo cargar el catálogo.", "Could not load catalog.") });
@@ -1142,7 +1173,7 @@ async function intlResolve(kind, id) {
 }
 
 // ---------------------------------------------------------------------------
-// Funciones de Kino v23: Segmentos, Trakt, Listas, Descargas, Subtítulos
+// Funciones de Kino v23
 // ---------------------------------------------------------------------------
 
 export async function segments(ref) {
@@ -1162,7 +1193,6 @@ export async function segments(ref) {
   }
 }
 
-// 🌟 AQUÍ ESTÁ LA CORRECCIÓN: El nombre de la función es "track", no "tracking"
 export async function track(ref, action) {
   if (String(kino.config.get("trakt_sync") || "true") === "false") return;
   try {
@@ -1217,19 +1247,44 @@ export async function home() {
 }
 
 export async function browse(ref, cursor) {
-  if (cursor) return { items: [], next: null };
   const r = String(ref);
+  const page = cursor ? parseInt(cursor) : 1;
 
+  // Paginación para Secciones por rid y Palabras Clave en China
+  if (mode() === "china") {
+    if (r.startsWith("browse:rid:")) {
+      const rid = r.split(":")[2];
+      const res = await getJson(API + "/x/web-interface/ranking/v2?rid=" + rid + "&type=all");
+      return { items: (res.data?.list || []).map(toVideoItem), next: null };
+    }
+    if (r.startsWith("browse:keyword:")) {
+      const keyword = decodeURIComponent(r.slice(15));
+      const res = await getJson(API + "/x/web-interface/search/type?search_type=video&keyword=" + encodeURIComponent(keyword) + "&page=" + page);
+      const list = res.data?.result || [];
+      const next = (res.data?.numPages && page < res.data?.numPages) ? String(page + 1) : null;
+      return { items: list.map(toVideoItem), next };
+    }
+  } else {
+    // Paginación por palabra clave en Internacional
+    if (r.startsWith("browse:keyword:")) {
+      const keyword = decodeURIComponent(r.slice(15));
+      const res = await intlSearch(keyword, cursor || "1");
+      return { items: Array.isArray(res) ? res : res.items || [], next: res.next || null };
+    }
+  }
+
+  // Paginación existente (anime, popular, generos, catalog)
+  if (cursor) return { items: [], next: null };
+  
   if (r === "browse:anime") {
-    let items;
     const anime = await catalogSection(INTL_WEB + "/en/anime", "cache:anime", true);
-    items = anime.items;
+    let items = anime.items;
     if (!items.length) items = await destacadasCached(true);
     const enriched = await enrichItems(items, 25);
     if (anime.items.length) writeCache("cache:anime", anime.items, 60);
     return { items: enriched.slice(0, 100), next: null };
   }
-
+  
   if (r === "browse:popular") {
     const popular = await catalogSection(INTL_WEB + "/en/popular", "cache:popular", true);
     if (!popular.items.length) throw kino.error("unavailable", "tendencias vacías", { userMessage: t("Tendencias no pudo cargar.", "Trending could not load.") });
@@ -1237,7 +1292,7 @@ export async function browse(ref, cursor) {
     writeCache("cache:popular", popular.items, 60);
     return { items: enrichedPop.slice(0, 100), next: null };
   }
-
+  
   if (r.startsWith("browse:g:")) {
     const genre = decodeURIComponent(r.slice(9));
     const pool = await destacadasCached(true);
@@ -1248,7 +1303,7 @@ export async function browse(ref, cursor) {
     writeCache("cache:destacadas2", pool, 120);
     return { items: enriched.slice(0, 100), next: null };
   }
-
+  
   if (r === "browse:catalog") {
     const anime = await catalogSection(INTL_WEB + "/en/anime", "cache:anime", false);
     const popular = await catalogSection(INTL_WEB + "/en/popular", "cache:popular", !anime.loaded);
@@ -1316,4 +1371,4 @@ export async function resolve(ref) {
   if (s.startsWith("e:")) return intlResolve("e", s.slice(2));
   if (s.startsWith("v:")) return intlResolve("v", s.slice(2));
   return cnResolve(s);
-                                                             }
+      }
