@@ -1,10 +1,10 @@
 {
   "id": "bilibili",
   "name": "Bilibili",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "apiVersion": 23,
   "entry": "plugin.js",
-  "description": "Bilibili con Historial, Favoritos, Trakt, Descargas, Temas y múltiples secciones (Anime, Doramas, AMV, Juegos, Donghua).",
+  "description": "Bilibili con Historial, Favoritos, Trakt, Descargas, Temas y múltiples secciones.",
   "author": "Susejing",
   "homepage": "https://github.com/Susejing/kino-plugin-bilibili",
   "hosts": [
@@ -20,17 +20,9 @@
   ],
   "streamHosts": "any",
   "capabilities": [
-    "search",
-    "home",
-    "browse",
-    "episodes",
-    "resolve",
-    "subtitles",
-    "segments",
-    "tracking",
-    "playlists",
-    "download",
-    "scopedSearch"
+    "search", "home", "browse", "episodes", "resolve", 
+    "subtitles", "segments", "tracking", "playlists", 
+    "download", "scopedSearch"
   ],
   "visualBrowser": true,
   "browser": "pages",
@@ -51,7 +43,12 @@
     },
     {
       "key": "link_account",
-      "label": "Vincular cuenta China",
+      "label": "Vincular cuenta (Usuario/Contraseña)",
+      "type": "action"
+    },
+    {
+      "key": "qr_login",
+      "label": "Vincular cuenta (Código QR)",
       "type": "action"
     },
     {
