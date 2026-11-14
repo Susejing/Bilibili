@@ -1,10 +1,10 @@
 {
   "id": "bilibili",
   "name": "Bilibili",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "apiVersion": 23,
   "entry": "plugin.js",
-  "description": "Bilibili con historial, favoritos, Trakt, descargas, temas y ventana de navegador para iniciar sesión.",
+  "description": "Bilibili con Historial, Favoritos, Trakt, Descargas, Temas y múltiples secciones (Anime, Doramas, AMV, Juegos, Donghua).",
   "author": "Susejing",
   "homepage": "https://github.com/Susejing/kino-plugin-bilibili",
   "hosts": [
