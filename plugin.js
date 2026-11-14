@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-// Kino plugin: Bilibili v1.1.1
+// Kino plugin: Bilibili v1.2.0
 // Integración completa con las funciones de Kino (v23) y secciones extra.
 
 const API = "https://api.bilibili.com";
@@ -324,63 +324,29 @@ export async function action(key) {
       return { message: t("El navegador visual no está disponible.", "Visual browser not available.") };
     }
 
-    try {
-      // 1. Generar el código QR en Bilibili
-      const genRes = await kino.fetch("https://passport.bilibili.com/x/passport-login/web/qrcode/generate");
-      if (!genRes.ok) throw new Error("No se pudo generar el QR");
-      const genData = genRes.json();
-      const qrcodeKey = genData.data.qrcode_key;
-      const qrUrl = genData.data.url;
+    // Abrimos la página normal de login, pero forzando que Bilibili crea que es una PC.
+    // En PC/TV, Bilibili mostrará el QR gigante de inmediato. En celular, mostrará el login normal.
+    const r = await kino.visualBrowser.open({
+      url: "https://passport.bilibili.com/login",
+      title: t("Escanea el QR desde tu móvil", "Scan QR from your mobile"),
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+      doneWhen: { urlMatches: "*www.bilibili.com*" },
+      collect: {
+        cookies: ["SESSDATA"],
+        storeAs: {
+          setting: "sessdata",
+          format: "header",
+        },
+      },
+      timeoutMs: 600000,
+    });
 
-      let sessdataFinal = null;
-
-      // 2. Iniciar el Polling (verificación en segundo plano)
-      const pollPromise = (async () => {
-        for (let i = 0; i < 60; i++) {
-          await new Promise(r => setTimeout(r, 2000)); // Esperar 2 segundos
-          try {
-            const pollRes = await kino.fetch("https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key=" + qrcodeKey);
-            const pollData = pollRes.json();
-            const code = pollData.data.code;
-
-            if (code === 0) {
-              // Éxito: extraer SESSDATA de la URL de redirección
-              const redirectUrl = pollData.data.url;
-              const urlParams = new URLSearchParams(redirectUrl.split('?')[1]);
-              const sd = urlParams.get('SESSDATA');
-              if (sd) {
-                sessdataFinal = sd;
-                return; // Terminar polling
-              }
-            } else if (code === 86038) {
-              return; // QR expirado
-            }
-            // Si es 86090 o 86101, el usuario aún no escanea o no confirma, seguimos esperando.
-          } catch (e) {
-            log("Error consultando QR:", e.message);
-          }
-        }
-      })();
-
-      // 3. Abrir el navegador visual con la URL nativa del QR de Bilibili.
-      // Al usar un User-Agent de escritorio, Bilibili mostrará la página con el QR en lugar de la vista móvil.
-      await kino.visualBrowser.open({
-        url: qrUrl,
-        title: t("Escanea este código QR con tu app", "Scan this QR code with your app"),
-        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        timeoutMs: 120000, 
-      });
-
-      // 4. Al cerrar el navegador, verificar el resultado
-      if (sessdataFinal) {
-        kino.config.set("sessdata", sessdataFinal);
-        return { message: t("¡Cuenta vinculada con QR!", "Account linked with QR!") };
-      } else {
-        return { message: t("El QR expiró o se canceló.", "QR expired or cancelled.") };
-      }
-
-    } catch (e) {
-      return { message: t("Error: ", "Error: ") + e.message };
+    if (r.status === "done" && r.stored) {
+      return { message: t("¡Cuenta vinculada con éxito!", "Account linked successfully!") };
+    } else if (r.status === "closed") {
+      return { message: t("Inicio de sesión cancelado.", "Login cancelled.") };
+    } else {
+      return { message: t("Error al vincular. Inténtalo de nuevo.", "Link error. Try again.") };
     }
   }
 }
@@ -1129,7 +1095,6 @@ async function intlHome() {
     });
   }
 
-  // Secciones nuevas por palabra clave para internacional
   const intlKeywords = [
     { id: "doramas", title: t("📺 Doramas", "📺 Doramas"), keyword: "dorama" },
     { id: "donghua", title: t("🐉 Donghua", "🐉 Donghua"), keyword: "donghua" },
@@ -1148,7 +1113,7 @@ async function intlHome() {
   const kwRows = await Promise.all(kwPromises);
   rows.push(...kwRows.filter((r) => r !== null));
 
-  log("home v1.1.1: " + (rows.length ? rows.map((r) => r.title + " " + r.items.length).join(" | ") : "sin filas"));
+  log("home v1.2.0: " + (rows.length ? rows.map((r) => r.title + " " + r.items.length).join(" | ") : "sin filas"));
 
   if (rows.length) return rows;
   throw kino.error("unavailable", "home vacío", { userMessage: t("No se pudo cargar el catálogo.", "Could not load catalog.") });
@@ -1316,7 +1281,6 @@ export async function browse(ref, cursor) {
   const r = String(ref);
   const page = cursor ? parseInt(cursor) : 1;
 
-  // Paginación para Secciones por rid y Palabras Clave en China
   if (mode() === "china") {
     if (r.startsWith("browse:rid:")) {
       const rid = r.split(":")[2];
@@ -1331,7 +1295,6 @@ export async function browse(ref, cursor) {
       return { items: list.map(toVideoItem), next };
     }
   } else {
-    // Paginación por palabra clave en Internacional
     if (r.startsWith("browse:keyword:")) {
       const keyword = decodeURIComponent(r.slice(15));
       const res = await intlSearch(keyword, cursor || "1");
@@ -1339,7 +1302,6 @@ export async function browse(ref, cursor) {
     }
   }
 
-  // Paginación existente (anime, popular, generos, catalog)
   if (cursor) return { items: [], next: null };
   
   if (r === "browse:anime") {
