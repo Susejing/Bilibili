@@ -325,66 +325,64 @@ export async function action(key) {
     }
 
     try {
-      // 1. Generar el código QR
+      // 1. Generar el código QR en Bilibili
       const genRes = await kino.fetch("https://passport.bilibili.com/x/passport-login/web/qrcode/generate");
       if (!genRes.ok) throw new Error("No se pudo generar el QR");
       const genData = genRes.json();
       const qrcodeKey = genData.data.qrcode_key;
       const qrUrl = genData.data.url;
 
-      // 2. Mostrar el QR en el navegador visual
+      // 2. Crear la URL de la imagen usando un generador de QR público
+      const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(qrUrl)}`;
+
+      let sessdataFinal = null;
+
+      // 3. Iniciar el Polling (verificación en segundo plano)
+      const pollPromise = (async () => {
+        for (let i = 0; i < 60; i++) {
+          await new Promise(r => setTimeout(r, 2000)); // Esperar 2 segundos
+          try {
+            const pollRes = await kino.fetch("https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key=" + qrcodeKey);
+            const pollData = pollRes.json();
+            const code = pollData.data.code;
+
+            if (code === 0) {
+              // Éxito: extraer SESSDATA de la URL de redirección
+              const redirectUrl = pollData.data.url;
+              const urlParams = new URLSearchParams(redirectUrl.split('?')[1]);
+              const sd = urlParams.get('SESSDATA');
+              if (sd) {
+                sessdataFinal = sd;
+                return; // Terminar polling
+              }
+            } else if (code === 86038) {
+              return; // QR expirado
+            }
+            // Si es 86090 o 86101, el usuario aún no escanea o no confirma, seguimos esperando.
+          } catch (e) {
+            log("Error consultando QR:", e.message);
+          }
+        }
+      })();
+
+      // 4. Mostrar la imagen del QR en el navegador visual
+      // El navegador se cerrará solo cuando el usuario lo cierre o pase el tiempo (2 min).
       await kino.visualBrowser.open({
-        url: qrUrl,
-        title: t("Escanea el código QR con tu app de Bilibili", "Scan the QR code with your Bilibili app"),
-        userAgent: "browser",
-        timeoutMs: 120000, // 2 minutos
+        url: qrImageUrl,
+        title: t("Escanea este código QR con la app de Bilibili", "Scan this QR code with the Bilibili app"),
+        timeoutMs: 120000, // 2 minutos máximo
       });
 
-      // 3. Hacer polling para verificar el estado del escaneo
-      let attempts = 0;
-      while (attempts < 60) {
-        const pollRes = await kino.fetch("https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key=" + qrcodeKey);
-        if (!pollRes.ok) throw new Error("Error al verificar el estado del QR");
-        const pollData = pollRes.json();
-        const code = pollData.data.code;
-
-        if (code === 0) {
-          // Éxito: extraer SESSDATA de la URL de redirección
-          const redirectUrl = pollData.data.url;
-          const urlParams = new URLSearchParams(redirectUrl.split('?')[1]);
-          const sessdata = urlParams.get('SESSDATA');
-          
-          if (sessdata) {
-            kino.config.set("sessdata", sessdata);
-            return { message: t("¡Inicio de sesión exitoso con código QR!", "QR login successful!") };
-          } else {
-            // Si no está en la URL, intentar obtenerla de las cookies de la redirección
-            const cookieRes = await kino.fetch(redirectUrl, { method: 'HEAD' });
-            const setCookie = cookieRes.headers.get('set-cookie');
-            if (setCookie) {
-              const match = setCookie.match(/SESSDATA=([^;]+)/);
-              if (match) {
-                kino.config.set("sessdata", match[1]);
-                return { message: t("¡Inicio de sesión exitoso con código QR!", "QR login successful!") };
-              }
-            }
-          }
-          throw new Error("No se pudo extraer la cookie SESSDATA.");
-        } else if (code === 86038) {
-          throw new Error(t("El código QR ha expirado. Inténtalo de nuevo.", "QR code expired. Try again."));
-        } else if (code === 86090 || code === 86101) {
-          // 86090: escaneado, esperando confirmación
-          // 86101: no escaneado
-          await new Promise(r => setTimeout(r, 2000));
-          attempts++;
-        } else {
-          throw new Error(t("Estado de QR desconocido: ", "Unknown QR state: ") + code);
-        }
+      // 5. Cuando se cierra el navegador, verificamos si el polling tuvo éxito
+      if (sessdataFinal) {
+        kino.config.set("sessdata", sessdataFinal);
+        return { message: t("¡Inicio de sesión exitoso con código QR!", "QR login successful!") };
+      } else {
+        return { message: t("El código QR expiró o se canceló.", "QR code expired or cancelled.") };
       }
-      throw new Error(t("Tiempo de espera agotado.", "Timeout waiting for scan."));
 
     } catch (e) {
-      return { message: e.message };
+      return { message: t("Error: ", "Error: ") + e.message };
     }
   }
 }
