@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-// Kino plugin: Bilibili v1.0.7
+// Kino plugin: Bilibili v1.0.8
 // Integración completa con las funciones de Kino (v23) y secciones extra.
 
 const API = "https://api.bilibili.com";
@@ -286,36 +286,106 @@ function toVideoItem(v) {
 }
 
 // ---------------------------------------------------------------------------
-// Acción: Vincular Cuenta con visualBrowser
+// Acción: Vincular Cuenta (Navegador y Código QR)
 // ---------------------------------------------------------------------------
 
 export async function action(key) {
-  if (key !== "link_account") return;
-  if (!kino.visualBrowser?.available) {
-    return { message: t("El navegador visual no está disponible. Pega la cookie SESSDATA a mano.", "Visual browser not available. Paste SESSDATA manually.") };
+  if (key === "link_account") {
+    if (!kino.visualBrowser?.available) {
+      return { message: t("El navegador visual no está disponible. Pega la cookie SESSDATA a mano.", "Visual browser not available. Paste SESSDATA manually.") };
+    }
+
+    const r = await kino.visualBrowser.open({
+      url: "https://passport.bilibili.com/login",
+      title: t("Iniciar sesión en Bilibili", "Login to Bilibili"),
+      userAgent: "browser",
+      doneWhen: { urlMatches: "*www.bilibili.com*" },
+      collect: {
+        cookies: ["SESSDATA"],
+        storeAs: {
+          setting: "sessdata",
+          format: "header",
+        },
+      },
+      timeoutMs: 600000,
+    });
+
+    if (r.status === "done" && r.stored) {
+      return { message: t("¡Cuenta vinculada! La cookie SESSDATA se guardó.", "Account linked! SESSDATA cookie saved.") };
+    } else if (r.status === "closed") {
+      return { message: t("Inicio de sesión cancelado.", "Login cancelled.") };
+    } else {
+      return { message: t("No se pudo vincular la cuenta. Inténtalo de nuevo.", "Could not link account. Try again.") };
+    }
   }
 
-  const r = await kino.visualBrowser.open({
-    url: "https://passport.bilibili.com/login",
-    title: t("Iniciar sesión en Bilibili", "Login to Bilibili"),
-    userAgent: "browser",
-    doneWhen: { urlMatches: "*www.bilibili.com*" },
-    collect: {
-      cookies: ["SESSDATA"],
-      storeAs: {
-        setting: "sessdata",
-        format: "header",
-      },
-    },
-    timeoutMs: 600000,
-  });
+  if (key === "qr_login") {
+    if (!kino.visualBrowser?.available) {
+      return { message: t("El navegador visual no está disponible.", "Visual browser not available.") };
+    }
 
-  if (r.status === "done" && r.stored) {
-    return { message: t("¡Cuenta vinculada! La cookie SESSDATA se guardó.", "Account linked! SESSDATA cookie saved.") };
-  } else if (r.status === "closed") {
-    return { message: t("Inicio de sesión cancelado.", "Login cancelled.") };
-  } else {
-    return { message: t("No se pudo vincular la cuenta. Inténtalo de nuevo.", "Could not link account. Try again.") };
+    try {
+      // 1. Generar el código QR
+      const genRes = await kino.fetch("https://passport.bilibili.com/x/passport-login/web/qrcode/generate");
+      if (!genRes.ok) throw new Error("No se pudo generar el QR");
+      const genData = genRes.json();
+      const qrcodeKey = genData.data.qrcode_key;
+      const qrUrl = genData.data.url;
+
+      // 2. Mostrar el QR en el navegador visual
+      await kino.visualBrowser.open({
+        url: qrUrl,
+        title: t("Escanea el código QR con tu app de Bilibili", "Scan the QR code with your Bilibili app"),
+        userAgent: "browser",
+        timeoutMs: 120000, // 2 minutos
+      });
+
+      // 3. Hacer polling para verificar el estado del escaneo
+      let attempts = 0;
+      while (attempts < 60) {
+        const pollRes = await kino.fetch("https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key=" + qrcodeKey);
+        if (!pollRes.ok) throw new Error("Error al verificar el estado del QR");
+        const pollData = pollRes.json();
+        const code = pollData.data.code;
+
+        if (code === 0) {
+          // Éxito: extraer SESSDATA de la URL de redirección
+          const redirectUrl = pollData.data.url;
+          const urlParams = new URLSearchParams(redirectUrl.split('?')[1]);
+          const sessdata = urlParams.get('SESSDATA');
+          
+          if (sessdata) {
+            kino.config.set("sessdata", sessdata);
+            return { message: t("¡Inicio de sesión exitoso con código QR!", "QR login successful!") };
+          } else {
+            // Si no está en la URL, intentar obtenerla de las cookies de la redirección
+            const cookieRes = await kino.fetch(redirectUrl, { method: 'HEAD' });
+            const setCookie = cookieRes.headers.get('set-cookie');
+            if (setCookie) {
+              const match = setCookie.match(/SESSDATA=([^;]+)/);
+              if (match) {
+                kino.config.set("sessdata", match[1]);
+                return { message: t("¡Inicio de sesión exitoso con código QR!", "QR login successful!") };
+              }
+            }
+          }
+          throw new Error("No se pudo extraer la cookie SESSDATA.");
+        } else if (code === 86038) {
+          throw new Error(t("El código QR ha expirado. Inténtalo de nuevo.", "QR code expired. Try again."));
+        } else if (code === 86090 || code === 86101) {
+          // 86090: escaneado, esperando confirmación
+          // 86101: no escaneado
+          await new Promise(r => setTimeout(r, 2000));
+          attempts++;
+        } else {
+          throw new Error(t("Estado de QR desconocido: ", "Unknown QR state: ") + code);
+        }
+      }
+      throw new Error(t("Tiempo de espera agotado.", "Timeout waiting for scan."));
+
+    } catch (e) {
+      return { message: e.message };
+    }
   }
 }
 
@@ -1082,7 +1152,7 @@ async function intlHome() {
   const kwRows = await Promise.all(kwPromises);
   rows.push(...kwRows.filter((r) => r !== null));
 
-  log("home v1.0.7: " + (rows.length ? rows.map((r) => r.title + " " + r.items.length).join(" | ") : "sin filas"));
+  log("home v1.0.8: " + (rows.length ? rows.map((r) => r.title + " " + r.items.length).join(" | ") : "sin filas"));
 
   if (rows.length) return rows;
   throw kino.error("unavailable", "home vacío", { userMessage: t("No se pudo cargar el catálogo.", "Could not load catalog.") });
@@ -1371,4 +1441,4 @@ export async function resolve(ref) {
   if (s.startsWith("e:")) return intlResolve("e", s.slice(2));
   if (s.startsWith("v:")) return intlResolve("v", s.slice(2));
   return cnResolve(s);
-      }
+}
