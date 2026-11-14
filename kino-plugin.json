@@ -1,7 +1,7 @@
 {
   "id": "bilibili",
   "name": "Bilibili",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "apiVersion": 23,
   "entry": "plugin.js",
   "description": "Bilibili con Historial, Favoritos, Trakt, Descargas, Temas y múltiples secciones.",
@@ -20,9 +20,17 @@
   ],
   "streamHosts": "any",
   "capabilities": [
-    "search", "home", "browse", "episodes", "resolve", 
-    "subtitles", "segments", "tracking", "playlists", 
-    "download", "scopedSearch"
+    "search",
+    "home",
+    "browse",
+    "episodes",
+    "resolve",
+    "subtitles",
+    "segments",
+    "tracking",
+    "playlists",
+    "download",
+    "scopedSearch"
   ],
   "visualBrowser": true,
   "browser": "pages",
