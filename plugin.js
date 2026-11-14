@@ -366,7 +366,6 @@ export async function action(key) {
       })();
 
       // 4. Mostrar la imagen del QR en el navegador visual
-      // El navegador se cerrará solo cuando el usuario lo cierre o pase el tiempo (2 min).
       await kino.visualBrowser.open({
         url: qrImageUrl,
         title: t("Escanea este código QR con la app de Bilibili", "Scan this QR code with the Bilibili app"),
@@ -1150,7 +1149,7 @@ async function intlHome() {
   const kwRows = await Promise.all(kwPromises);
   rows.push(...kwRows.filter((r) => r !== null));
 
-  log("home v1.0.8: " + (rows.length ? rows.map((r) => r.title + " " + r.items.length).join(" | ") : "sin filas"));
+  log("home v1.0.9: " + (rows.length ? rows.map((r) => r.title + " " + r.items.length).join(" | ") : "sin filas"));
 
   if (rows.length) return rows;
   throw kino.error("unavailable", "home vacío", { userMessage: t("No se pudo cargar el catálogo.", "Could not load catalog.") });
