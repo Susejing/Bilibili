@@ -1,10 +1,10 @@
 {
   "id": "bilibili",
   "name": "Bilibili",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "apiVersion": 23,
   "entry": "plugin.js",
-  "description": "Bilibili con Historial, Favoritos, Trakt, Descargas, Temas y múltiples secciones.",
+  "description": "Bilibili con buscador mejorado, Historial, Favoritos, Trakt, Descargas y Temas.",
   "author": "Susejing",
   "homepage": "https://github.com/Susejing/kino-plugin-bilibili",
   "hosts": [
@@ -20,17 +20,9 @@
   ],
   "streamHosts": "any",
   "capabilities": [
-    "search",
-    "home",
-    "browse",
-    "episodes",
-    "resolve",
-    "subtitles",
-    "segments",
-    "tracking",
-    "playlists",
-    "download",
-    "scopedSearch"
+    "search", "home", "browse", "episodes", "resolve", 
+    "subtitles", "segments", "tracking", "playlists", 
+    "download", "scopedSearch"
   ],
   "visualBrowser": true,
   "browser": "pages",
