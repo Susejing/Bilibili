@@ -14,8 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-// Kino plugin: Bilibili v1.3.0
-// Integración completa con las funciones de Kino (v23) y secciones extra.
+// Kino plugin: Bilibili v1.4.0
+// Integración completa con firmas WBI y manejo avanzado de cookies.
 
 const API = "https://api.bilibili.com";
 const WEB = "https://www.bilibili.com";
@@ -145,7 +145,79 @@ function setFailMarker(key) {
 }
 
 // ---------------------------------------------------------------------------
-// Modo China (bilibili.com) - Autenticación
+// WBI Signature Generator (v1.4.0)
+// ---------------------------------------------------------------------------
+
+const mixinKeyEncTab = [
+  46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35,
+  27, 43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13,
+  37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4,
+  22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52,
+];
+
+function getMixinKey(orig) {
+  let temp = "";
+  for (let i = 0; i < 64; i++) {
+    temp += orig[mixinKeyEncTab[i]];
+  }
+  return temp.slice(0, 32);
+}
+
+async function getWbiKeys() {
+  const cached = readCache("cache:wbi_keys");
+  if (cached && cached.length >= 2) {
+    return { img_key: cached[0], sub_key: cached[1] };
+  }
+  try {
+    const navRes = await kino.fetch(API + "/x/web-interface/nav", {
+      headers: { "User-Agent": UA, Referer: WEB + "/" },
+    });
+    if (navRes.ok) {
+      const navData = navRes.json();
+      const wbi_img = navData.data?.wbi_img;
+      if (wbi_img) {
+        const img_key = wbi_img.img_url.split('/').pop().split('.')[0];
+        const sub_key = wbi_img.sub_url.split('/').pop().split('.')[0];
+        writeCache("cache:wbi_keys", [img_key, sub_key], 2);
+        return { img_key, sub_key };
+      }
+    }
+  } catch (e) {
+    log("Error obteniendo WBI keys:", e.message);
+  }
+  return null;
+}
+
+async function signWbi(params) {
+  const keys = await getWbiKeys();
+  if (!keys) return params;
+
+  const mixin_key = getMixinKey(keys.img_key + keys.sub_key);
+  const wts = Math.round(Date.now() / 1000);
+  params.wts = wts;
+
+  const query = Object.keys(params)
+    .sort()
+    .map((key) => {
+      const value = String(params[key]).replace(/[!'()*]/g, "");
+      return `${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+    })
+    .join("&");
+
+  const w_rid = await md5(query + mixin_key);
+  params.w_rid = w_rid;
+  return params;
+}
+
+async function md5(str) {
+  const msgBuffer = new TextEncoder().encode(str);
+  const hashBuffer = await crypto.subtle.digest("MD5", msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// ---------------------------------------------------------------------------
+// Modo China (bilibili.com) - Autenticación y Peticiones
 // ---------------------------------------------------------------------------
 
 let buvidCache = null;
@@ -283,18 +355,6 @@ async function getJson(url, retry = true) {
   return data;
 }
 
-function toVideoItem(v) {
-  return {
-    id: String(v.bvid || v.aid),
-    ref: v.bvid || ("av" + v.aid),
-    title: cleanTitle(v.title),
-    kind: "movie",
-    poster: posterUrl(v.pic),
-    year: v.pubdate ? String(new Date(v.pubdate * 1000).getFullYear()) : undefined,
-    overview: cleanTitle(v.description || v.desc || "").slice(0, 300),
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Acción: Vincular Cuenta (Navegador y Código QR)
 // ---------------------------------------------------------------------------
@@ -430,7 +490,7 @@ async function fetchRecommended() {
 }
 
 // ---------------------------------------------------------------------------
-// Búsqueda China con Bucle (Hasta 80 resultados)
+// Búsqueda China con Bucle (Hasta 80 resultados) y Firma WBI
 // ---------------------------------------------------------------------------
 
 async function cnSearch(q) {
@@ -438,9 +498,11 @@ async function cnSearch(q) {
   const seen = new Set();
   
   for (let page = 1; page <= 4; page++) {
-    const url = API + "/x/web-interface/search/type?search_type=video&keyword=" + encodeURIComponent(q) + "&page=" + page;
+    let url = API + "/x/web-interface/search/type?search_type=video&keyword=" + encodeURIComponent(q) + "&page=" + page;
+    // Firmamos la URL con WBI
+    const signedUrl = await signWbi(url);
     try {
-      const data = await getJson(url);
+      const data = await getJson(signedUrl);
       const list = data.data?.result || [];
       
       for (const v of list) {
@@ -478,8 +540,9 @@ export async function scopedSearch(query, scope) {
 
 async function cnKeywordRow(keyword, title) {
   try {
-    const url = API + "/x/web-interface/search/type?search_type=video&keyword=" + encodeURIComponent(keyword);
-    const data = await getJson(url);
+    let url = API + "/x/web-interface/search/type?search_type=video&keyword=" + encodeURIComponent(keyword);
+    const signedUrl = await signWbi(url);
+    const data = await getJson(signedUrl);
     const list = data.data?.result || [];
     if (!list.length) return null;
     return {
@@ -539,7 +602,6 @@ async function cnHome() {
     return null;
   });
 
-  // Sección especial de Donghua (Animación China)
   const donghuaPromise = cnKeywordRow("国创", t("🐉 Donghua (Animación China)", "🐉 Donghua (Chinese Animation)"));
 
   const generalRows = await Promise.all(promises);
@@ -552,7 +614,7 @@ async function cnHome() {
 }
 
 // ---------------------------------------------------------------------------
-// Resolución de Video y Subtítulos (Modo China)
+// Resolución de Video y Subtítulos (Modo China) con Firma WBI
 // ---------------------------------------------------------------------------
 
 function streamFromPlay(d, realBvid) {
@@ -570,8 +632,9 @@ function streamFromPlay(d, realBvid) {
 
 async function cnSubtitles(bvid, cid) {
   try {
-    const url = API + "/x/player/v2?bvid=" + bvid + "&cid=" + cid;
-    const data = await getJson(url);
+    let url = API + "/x/player/v2?bvid=" + bvid + "&cid=" + cid;
+    const signedUrl = await signWbi(url);
+    const data = await getJson(signedUrl);
     const subs = data.data?.subtitle?.subtitles || [];
     const out = [];
     for (const sub of subs) {
@@ -598,7 +661,9 @@ async function cnResolve(ref) {
   if (bvid) viewUrl += "bvid=" + encodeURIComponent(bvid);
   else viewUrl += "aid=" + encodeURIComponent(aid);
 
-  const view = await getJson(viewUrl);
+  // Firmamos la petición de vista
+  const signedViewUrl = await signWbi(viewUrl);
+  const view = await getJson(signedViewUrl);
   const vd = view.data;
   if (!vd) throw kino.error("not_found", "no data", { userMessage: t("Video no encontrado.", "Video not found.") });
 
@@ -606,15 +671,17 @@ async function cnResolve(ref) {
   const realBvid = vd.bvid;
 
   const attempts = [
-    API + "/x/player/playurl?bvid=" + encodeURIComponent(realBvid) + "&cid=" + cid + "&qn=64&fnval=1&platform=html5&high_quality=1",
-    API + "/x/player/playurl?bvid=" + encodeURIComponent(realBvid) + "&cid=" + cid + "&qn=32&fnval=1&platform=html5",
-    API + "/x/player/playurl?avid=" + vd.aid + "&cid=" + cid + "&qn=32&fnval=0",
+    API + "/x/player/wbi/playurl?bvid=" + encodeURIComponent(realBvid) + "&cid=" + cid + "&qn=64&fnval=1&platform=html5&high_quality=1",
+    API + "/x/player/wbi/playurl?bvid=" + encodeURIComponent(realBvid) + "&cid=" + cid + "&qn=32&fnval=1&platform=html5",
+    API + "/x/player/wbi/playurl?avid=" + vd.aid + "&cid=" + cid + "&qn=32&fnval=0",
   ];
 
   let lastErr = null;
   for (const playUrl of attempts) {
     try {
-      const play = await getJson(playUrl);
+      // Firmamos cada intento de reproducción
+      const signedPlayUrl = await signWbi(playUrl);
+      const play = await getJson(signedPlayUrl);
       const stream = streamFromPlay(play.data, realBvid);
       if (stream) {
         try {
@@ -633,7 +700,7 @@ async function cnResolve(ref) {
 }
 
 // ---------------------------------------------------------------------------
-// Modo Internacional (bilibili.tv) - Autenticación
+// Modo Internacional (bilibili.tv) - Autenticación (sin cambios)
 // ---------------------------------------------------------------------------
 
 let intlBuvidCache = null;
@@ -706,7 +773,7 @@ async function intlJson(url) {
 }
 
 // ---------------------------------------------------------------------------
-// Búsqueda (Internacional)
+// Búsqueda (Internacional) (sin cambios)
 // ---------------------------------------------------------------------------
 
 async function intlSearch(q, cursor) {
@@ -771,7 +838,7 @@ async function intlSearch(q, cursor) {
 }
 
 // ---------------------------------------------------------------------------
-// Parser de Catálogo (Internacional)
+// Parser de Catálogo (Internacional) (sin cambios)
 // ---------------------------------------------------------------------------
 
 function parseAnimeHtml(html) {
@@ -1114,7 +1181,7 @@ async function intlHome() {
   const kwRows = await Promise.all(kwPromises);
   rows.push(...kwRows.filter((r) => r !== null));
 
-  log("home v1.3.0: " + (rows.length ? rows.map((r) => r.title + " " + r.items.length).join(" | ") : "sin filas"));
+  log("home v1.4.0: " + (rows.length ? rows.map((r) => r.title + " " + r.items.length).join(" | ") : "sin filas"));
 
   if (rows.length) return rows;
   throw kino.error("unavailable", "home vacío", { userMessage: t("No se pudo cargar el catálogo.", "Could not load catalog.") });
