@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-// Kino plugin: Bilibili v1.2.0
+// Kino plugin: Bilibili v1.2.1
 // Integración completa con las funciones de Kino (v23) y secciones extra.
 
 const API = "https://api.bilibili.com";
@@ -324,8 +324,7 @@ export async function action(key) {
       return { message: t("El navegador visual no está disponible.", "Visual browser not available.") };
     }
 
-    // Abrimos la página normal de login, pero forzando que Bilibili crea que es una PC.
-    // En PC/TV, Bilibili mostrará el QR gigante de inmediato. En celular, mostrará el login normal.
+    // Abrimos la página normal de login, forzando vista de PC para ver el QR.
     const r = await kino.visualBrowser.open({
       url: "https://passport.bilibili.com/login",
       title: t("Escanea el QR desde tu móvil", "Scan QR from your mobile"),
@@ -425,48 +424,42 @@ async function fetchRecommended() {
 // Búsqueda (China) y Scoped Search
 // ---------------------------------------------------------------------------
 
-async function cnSearch(q, scope) {
-  const url = API + "/x/web-interface/search/all/v2?keyword=" + encodeURIComponent(q) + "&page=1";
-  const data = await getJson(url);
-  const blocks = (data.data && data.data.result) || [];
-  let out = [];
-  const seen = new Set();
-
-  for (const block of blocks) {
-    if (block.result_type !== "video") continue;
-    const list = Array.isArray(block.data) ? block.data : [];
-    for (const v of list) {
+// 🌟 BÚSQUEDA CHINA MEJORADA CON PAGINACIÓN Y API DE VIDEOS
+async function cnSearch(q, cursor) {
+  const page = cursor ? parseInt(cursor) : 1;
+  // Usamos la API de búsqueda de tipo video, que es más precisa para UGC (gameplays, etc.)
+  const url = API + "/x/web-interface/search/type?search_type=video&keyword=" + encodeURIComponent(q) + "&page=" + page;
+  
+  try {
+    const data = await getJson(url);
+    const list = data.data?.result || [];
+    
+    // La API nos dice cuántas páginas hay en total
+    const totalPages = data.data?.numPages || 1;
+    const next = (page < totalPages) ? String(page + 1) : null;
+    
+    const items = list.map(v => {
       const item = toVideoItem(v);
-      if (!item.ref || seen.has(item.ref)) continue;
+      // Si Bilibili devuelve el título con etiquetas <em> para resaltar la búsqueda, las limpiamos
+      item.title = item.title.replace(/<\/?em[^>]*>/g, "");
+      return item;
+    });
 
-      let durSecs = 0;
-      if (v.duration) {
-        const parts = v.duration.split(':').map(Number);
-        if (parts.length === 2) durSecs = parts[0] * 60 + parts[1];
-        else if (parts.length === 3) durSecs = parts[0] * 3600 + parts[1] * 60 + parts[2];
-      }
-      item._dur = durSecs;
-
-      seen.add(item.ref);
-      out.push(item);
-    }
+    return { items, next };
+  } catch (e) {
+    log("Error en búsqueda China:", e.message);
+    return { items: [], next: null };
   }
-
-  if (scope === "movie") out = out.filter((i) => i._dur > 1200);
-  if (scope === "series") out = out.filter((i) => i._dur > 1200);
-
-  out.sort((a, b) => b._dur - a._dur);
-  return out.map((i) => {
-    delete i._dur;
-    return i;
-  });
 }
 
 export async function scopedSearch(query, scope) {
   const q = (query.q || "").trim();
   if (!q) return [];
-  if (mode() === "china") return cnSearch(q, scope);
-  const res = await intlSearch(q, null);
+  if (mode() === "china") {
+    const res = await cnSearch(q, query.cursor);
+    return res.items; // Scoped search no maneja paginación directa en este código
+  }
+  const res = await intlSearch(q, query.cursor);
   const items = Array.isArray(res) ? res : res.items || [];
   return scope === "series" ? items.filter((i) => i.kind === "series") : items;
 }
@@ -1113,7 +1106,7 @@ async function intlHome() {
   const kwRows = await Promise.all(kwPromises);
   rows.push(...kwRows.filter((r) => r !== null));
 
-  log("home v1.2.0: " + (rows.length ? rows.map((r) => r.title + " " + r.items.length).join(" | ") : "sin filas"));
+  log("home v1.2.1: " + (rows.length ? rows.map((r) => r.title + " " + r.items.length).join(" | ") : "sin filas"));
 
   if (rows.length) return rows;
   throw kino.error("unavailable", "home vacío", { userMessage: t("No se pudo cargar el catálogo.", "Could not load catalog.") });
@@ -1268,7 +1261,7 @@ export async function categories() {
 export async function search(query) {
   const q = (query.q || "").trim();
   if (!q) return [];
-  if (mode() === "china") return cnSearch(q, null);
+  if (mode() === "china") return cnSearch(q, query.cursor); // Pasamos el cursor
   return intlSearch(q, query.cursor);
 }
 
@@ -1399,4 +1392,4 @@ export async function resolve(ref) {
   if (s.startsWith("e:")) return intlResolve("e", s.slice(2));
   if (s.startsWith("v:")) return intlResolve("v", s.slice(2));
   return cnResolve(s);
-}
+            }
