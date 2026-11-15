@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-// Kino plugin: Bilibili v1.2.2
+// Kino plugin: Bilibili v1.3.0
 // Integración completa con las funciones de Kino (v23) y secciones extra.
 
 const API = "https://api.bilibili.com";
@@ -224,7 +224,7 @@ function baseHeaders(extra) {
   return h;
 }
 
-async function getJson(url) {
+async function getJson(url, retry = true) {
   await ensureBuvid();
   const r = await kino.fetch(url, {
     headers: baseHeaders(),
@@ -234,8 +234,13 @@ async function getJson(url) {
 
   if (!r.ok) {
     if (r.status === 412) {
+      if (retry) {
+        log("HTTP 412 (riesgo). Reintentando en 2s...");
+        await new Promise(res => setTimeout(res, 2000));
+        return getJson(url, false);
+      }
       throw kino.error("unavailable", "HTTP 412", {
-        userMessage: t("Bilibili bloqueó la reproducción (412). Vincula tu cuenta de Bilibili en los ajustes.", "Bilibili blocked playback (412). Link your account in settings."),
+        userMessage: t("Bilibili bloqueó la petición (412 por riesgo). Prueba usando una VPN o espera unos minutos.", "Bilibili blocked the request (412 risk control). Try using a VPN or wait a few minutes."),
       });
     }
     throw kino.error("unavailable", "HTTP " + r.status, {
@@ -262,8 +267,13 @@ async function getJson(url) {
   if (data.code !== 0 && data.code !== undefined) {
     const msg = data.message || String(data.code);
     if (data.code === -412 || data.code === 412) {
+      if (retry) {
+         log("API 412 (riesgo). Reintentando en 2s...");
+         await new Promise(res => setTimeout(res, 2000));
+         return getJson(url, false);
+      }
       throw kino.error("unavailable", msg, {
-        userMessage: t("Bilibili bloqueó el stream (412).", "Bilibili blocked the stream (412)."),
+        userMessage: t("Bilibili bloqueó el stream (412). Usa VPN o espera un momento.", "Bilibili blocked the stream (412). Use VPN or wait a moment."),
       });
     }
     throw kino.error("unavailable", msg, {
@@ -427,7 +437,6 @@ async function cnSearch(q) {
   let allItems = [];
   const seen = new Set();
   
-  // Bucle para pedir 4 páginas a Bilibili (20 resultados por página = 80 en total)
   for (let page = 1; page <= 4; page++) {
     const url = API + "/x/web-interface/search/type?search_type=video&keyword=" + encodeURIComponent(q) + "&page=" + page;
     try {
@@ -436,7 +445,6 @@ async function cnSearch(q) {
       
       for (const v of list) {
         const item = toVideoItem(v);
-        // Limpiamos las etiquetas <em> que Bilibili añade a las palabras buscadas
         item.title = item.title.replace(/<\/?em[^>]*>/g, "");
         
         if (item.ref && !seen.has(item.ref)) {
@@ -444,7 +452,6 @@ async function cnSearch(q) {
           allItems.push(item);
         }
       }
-      // Si una página devuelve menos de 20, significa que ya no hay más resultados
       if (list.length < 20) break;
     } catch (e) {
       log("Error en búsqueda China página " + page + ":", e.message);
@@ -1107,7 +1114,7 @@ async function intlHome() {
   const kwRows = await Promise.all(kwPromises);
   rows.push(...kwRows.filter((r) => r !== null));
 
-  log("home v1.2.2: " + (rows.length ? rows.map((r) => r.title + " " + r.items.length).join(" | ") : "sin filas"));
+  log("home v1.3.0: " + (rows.length ? rows.map((r) => r.title + " " + r.items.length).join(" | ") : "sin filas"));
 
   if (rows.length) return rows;
   throw kino.error("unavailable", "home vacío", { userMessage: t("No se pudo cargar el catálogo.", "Could not load catalog.") });
@@ -1262,7 +1269,7 @@ export async function categories() {
 export async function search(query) {
   const q = (query.q || "").trim();
   if (!q) return [];
-  if (mode() === "china") return cnSearch(q); // Ya no usa cursor, devuelve hasta 80 de golpe
+  if (mode() === "china") return cnSearch(q);
   return intlSearch(q, query.cursor);
 }
 
@@ -1393,4 +1400,4 @@ export async function resolve(ref) {
   if (s.startsWith("e:")) return intlResolve("e", s.slice(2));
   if (s.startsWith("v:")) return intlResolve("v", s.slice(2));
   return cnResolve(s);
-}
+          }
