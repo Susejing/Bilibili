@@ -1,10 +1,10 @@
 {
   "id": "bilibili",
   "name": "Bilibili",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "apiVersion": 23,
   "entry": "plugin.js",
-  "description": "Bilibili con firmas WBI, manejo avanzado de cookies y reintentos para evitar el error 412.",
+  "description": "Bilibili con inicio de sesión completo (SESSDATA + DedeUserID + bili_jct) y verificación de cuenta.",
   "author": "Susejing",
   "homepage": "https://github.com/Susejing/kino-plugin-bilibili",
   "hosts": [
@@ -47,13 +47,25 @@
       "type": "action"
     },
     {
-      "key": "qr_login",
-      "label": "Vincular cuenta (Escanear QR)",
+      "key": "verify_account",
+      "label": "Verificar Cuenta",
       "type": "action"
     },
     {
       "key": "sessdata",
       "label": "Cookie SESSDATA",
+      "type": "password",
+      "hint": "Se llena automáticamente."
+    },
+    {
+      "key": "dedeuserid",
+      "label": "Cookie DedeUserID",
+      "type": "text",
+      "hint": "Se llena automáticamente."
+    },
+    {
+      "key": "bili_jct",
+      "label": "Cookie bili_jct",
       "type": "password",
       "hint": "Se llena automáticamente."
     },
