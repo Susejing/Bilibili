@@ -14,8 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-// Kino plugin: Bilibili v1.5.0
-// Integración completa con login real, firmas WBI y manejo de progreso.
+// Kino plugin: Bilibili v1.5.1
+// Integración completa con login real, firmas WBI (con fallback) y progreso.
 
 const API = "https://api.bilibili.com";
 const WEB = "https://www.bilibili.com";
@@ -131,7 +131,7 @@ function failRecent(key) {
 function setFailMarker(key) { try { kino.storage.set(key, JSON.stringify({ ts: Date.now() })); } catch {} }
 
 // ---------------------------------------------------------------------------
-// WBI Signature Generator
+// WBI Signature Generator (con Fallback seguro)
 // ---------------------------------------------------------------------------
 
 const mixinKeyEncTab = [46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52];
@@ -161,32 +161,39 @@ async function getWbiKeys() {
   return null;
 }
 
-async function signWbi(url) {
-  const keys = await getWbiKeys();
-  if (!keys) return url;
-  const mixin_key = getMixinKey(keys.img_key + keys.sub_key);
-  const wts = Math.round(Date.now() / 1000);
-  
-  const urlObj = new URL(url);
-  const params = new URLSearchParams(urlObj.search);
-  params.set("wts", wts);
-  
-  const sortedParams = Array.from(params.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  const query = sortedParams.map(([key, value]) => {
-    const cleanValue = String(value).replace(/[!'()*]/g, "");
-    return `${encodeURIComponent(key)}=${encodeURIComponent(cleanValue)}`;
-  }).join("&");
-
-  const w_rid = await md5(query + mixin_key);
-  params.set("w_rid", w_rid);
-  return urlObj.origin + urlObj.pathname + "?" + params.toString();
-}
-
 async function md5(str) {
+  // Si crypto.subtle no existe en este entorno de Kino, lanzamos error para que el fallback actúe
+  if (!crypto || !crypto.subtle) throw new Error("crypto.subtle no soportado");
   const msgBuffer = new TextEncoder().encode(str);
   const hashBuffer = await crypto.subtle.digest("MD5", msgBuffer);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function signWbi(url) {
+  try {
+    const keys = await getWbiKeys();
+    if (!keys) return url;
+    const mixin_key = getMixinKey(keys.img_key + keys.sub_key);
+    const wts = Math.round(Date.now() / 1000);
+    
+    const urlObj = new URL(url);
+    const params = new URLSearchParams(urlObj.search);
+    params.set("wts", wts);
+    
+    const sortedParams = Array.from(params.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    const query = sortedParams.map(([key, value]) => {
+      const cleanValue = String(value).replace(/[!'()*]/g, "");
+      return `${encodeURIComponent(key)}=${encodeURIComponent(cleanValue)}`;
+    }).join("&");
+
+    const w_rid = await md5(query + mixin_key);
+    params.set("w_rid", w_rid);
+    return urlObj.origin + urlObj.pathname + "?" + params.toString();
+  } catch (e) {
+    log("Firma WBI falló, usando URL original (fallback):", e.message);
+    return url; // Fallback: si falla el MD5, devolvemos la URL tal cual
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -247,7 +254,8 @@ function baseHeaders(extra) {
 
 async function getJson(url, retry = true) {
   await ensureBuvid();
-  const signedUrl = await signWbi(url);
+  // Intentamos firmar, si falla devolverá la url normal
+  const signedUrl = await signWbi(url); 
   
   const r = await kino.fetch(signedUrl, { headers: baseHeaders(), cookies: true, timeoutMs: 20000 });
 
@@ -569,13 +577,11 @@ export async function track(ref, action) {
   const id = s.includes(":") ? s.split(":")[1] : s;
   const isEp = s.startsWith("e:");
   
-  // Kino llama a track con "start", "progress", "stop"
-  // Si es un video individual, enviamos el heartbeat a Bilibili
   if (!isEp && action === "progress") {
     try {
       const view = await getJson(API + "/x/web-interface/view?bvid=" + id);
       const cid = view.data.cid;
-      const progress = 10; // Simulamos 10 segundos de visualización
+      const progress = 10;
       
       const body = new URLSearchParams({
         bvid: id,
