@@ -1,10 +1,10 @@
 {
   "id": "bilibili",
   "name": "Bilibili",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "apiVersion": 23,
   "entry": "plugin.js",
-  "description": "Bilibili con buscador mejorado, Historial, Favoritos, Trakt, Descargas y Temas.",
+  "description": "Bilibili con buscador mejorado (múltiples resultados), Historial, Favoritos, Trakt, Descargas y Temas.",
   "author": "Susejing",
   "homepage": "https://github.com/Susejing/kino-plugin-bilibili",
   "hosts": [
