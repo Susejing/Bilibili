@@ -1,7 +1,7 @@
 {
   "id": "bilibili",
   "name": "Bilibili",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "apiVersion": 23,
   "entry": "plugin.js",
   "description": "Bilibili (China e Internacional): búsqueda, catálogo, cuenta, subtítulos, progreso y reproducción más rápida.",
