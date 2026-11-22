@@ -1,4 +1,4 @@
-// Kino plugin: Bilibili v1.6.1 — Susejing
+// Kino plugin: Bilibili v1.6.2 — Susejing
 const API = "https://api.bilibili.com";
 const WEB = "https://www.bilibili.com";
 const INTL_API = "https://api.bilibili.tv/intl/gateway/web";
@@ -385,41 +385,67 @@ export async function search(query) {
   return intlSearch(q, query.cursor);
 }
 export async function home() {
-  if (mode() === "china") {
-    const rows = [];
+  const rows = [];
+  // Personal lists (China cookies) — only when region is china or cookies exist
+  if (mode() === "china" || sessdata()) {
     try { const h = await fetchHistory(); if (h.length) rows.push({ title: t("Continuar viendo", "Continue watching"), items: h.slice(0, 20) }); } catch (e) {}
     try { const f = await fetchFavorites(); if (f.length) rows.push({ title: t("Favoritos", "Favorites"), items: f.slice(0, 20) }); } catch (e) {}
     try { const r = await fetchRecommended(); if (r.length) rows.push({ title: t("Recomendados", "Recommended"), items: r.slice(0, 20) }); } catch (e) {}
-    try {
-      const data = await getJson(API + "/x/web-interface/popular?ps=20&pn=1");
-      const items = ((data.data && data.data.list) || []).map(toVideoItem).filter((i) => i.ref);
-      if (items.length) rows.push({ title: t("Tendencias", "Trending"), items });
-    } catch (e) {}
-    return rows;
   }
-  const rows = [];
+  // China public popular — works worldwide for public content
   try {
-    const data = await intlJson(INTL_API + "/v2/ogv/home?s_locale=en_US&platform=web");
-    for (const mod of (data && data.modules) || []) {
-      const title = cleanTitle(mod.title || mod.name || "");
-      const items = [];
-      for (const it of (mod.items || mod.cards || []).slice(0, 20)) {
-        const name = cleanTitle(it.title || it.name || "");
-        if (it.season_id) items.push({ id: "s:" + it.season_id, ref: "s:" + it.season_id, title: name, kind: "series", poster: posterUrl(it.cover || it.horizontal_cover) });
-        else if (it.aid || it.bvid) items.push({ id: String(it.bvid || it.aid), ref: it.bvid || ("av" + it.aid), title: name, kind: "movie", poster: posterUrl(it.cover || it.pic) });
+    const data = await getJson(API + "/x/web-interface/popular?ps=20&pn=1");
+    const items = ((data.data && data.data.list) || []).map(toVideoItem).filter((i) => i && i.ref);
+    if (items.length) rows.push({ title: t("Tendencias", "Trending"), items });
+  } catch (e) { log("cn popular", e && e.message); }
+  // Intl OGV home (may be geo/API broken — non-fatal)
+  if (mode() !== "china") {
+    try {
+      const data = await intlJson(INTL_API + "/v2/ogv/home?s_locale=en_US&platform=web");
+      for (const mod of (data && data.modules) || []) {
+        const title = cleanTitle(mod.title || mod.name || "");
+        const items = [];
+        for (const it of (mod.items || mod.cards || []).slice(0, 20)) {
+          const name = cleanTitle(it.title || it.name || "");
+          if (it.season_id) items.push({ id: "s:" + it.season_id, ref: "s:" + it.season_id, title: name, kind: "series", poster: posterUrl(it.cover || it.horizontal_cover) });
+          else if (it.aid || it.bvid) items.push({ id: String(it.bvid || it.aid), ref: it.bvid || ("av" + it.aid), title: name, kind: "movie", poster: posterUrl(it.cover || it.pic) });
+        }
+        if (title && items.length) rows.push({ title, items });
+        if (rows.length >= 12) break;
       }
-      if (title && items.length) rows.push({ title, items });
-      if (rows.length >= 10) break;
-    }
-  } catch (e) { log("intl home", e && e.message); }
-  if (!rows.length) {
-    for (const q of ["One Piece", "Naruto", "Demon Slayer", "Jujutsu Kaisen", "Solo Leveling", "Anime"]) {
+    } catch (e) { log("intl home", e && e.message); }
+  }
+  // Guaranteed fallbacks so the plugin never shows "no catalogs"
+  if (rows.length < 2) {
+    const queries = mode() === "china"
+      ? ["热门", "动画", "番剧", "游戏", "音乐"]
+      : ["One Piece", "Naruto", "Demon Slayer", "Jujutsu Kaisen", "Solo Leveling", "Anime"];
+    for (const q of queries) {
       try {
-        const res = await intlSearch(q, null);
-        const items = (Array.isArray(res) ? res : (res && res.items) || []).slice(0, 15);
+        let items = [];
+        if (mode() === "china") {
+          items = (await cnSearch(q)).slice(0, 15);
+        } else {
+          try {
+            const res = await intlSearch(q, null);
+            items = (Array.isArray(res) ? res : (res && res.items) || []).slice(0, 15);
+          } catch (_) {
+            items = (await cnSearch(q)).slice(0, 15);
+          }
+        }
         if (items.length) rows.push({ title: q, items });
       } catch (e) {}
+      if (rows.length >= 6) break;
     }
+  }
+  if (!rows.length) {
+    // Last resort: throw a clear error instead of silent empty catalog
+    throw kino.error("unavailable", "empty_home", {
+      userMessage: t(
+        "No se pudo cargar el catálogo. Prueba cambiar a región China, vincular cuenta o usar VPN.",
+        "Could not load catalog. Try region China, link account, or use a VPN."
+      )
+    });
   }
   return rows;
 }

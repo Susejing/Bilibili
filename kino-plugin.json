@@ -1,10 +1,10 @@
 {
   "id": "bilibili",
   "name": "Bilibili",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "apiVersion": 23,
   "entry": "plugin.js",
-  "description": "Bilibili (China e Internacional): búsqueda, catálogo, cuenta, subtítulos, progreso y reproducción más rápida.",
+  "description": "Bilibili (China e Internacional): catálogo robusto, búsqueda, cuenta, subtítulos y reproducción. Fallback automático si la API intl falla.",
   "author": "Susejing",
   "homepage": "https://github.com/Susejing/kino-plugin-bilibili",
   "hosts": [
@@ -40,7 +40,7 @@
         { "value": "intl", "label": "Internacional" },
         { "value": "china", "label": "China" }
       ],
-      "hint": "China suele requerir VPN."
+      "hint": "China suele requerir VPN. Si el catálogo sale vacío, prueba China."
     },
     {
       "key": "link_account",
