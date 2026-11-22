@@ -1,10 +1,10 @@
 {
   "id": "bilibili",
   "name": "Bilibili",
-  "version": "1.6.3",
+  "version": "1.6.4",
   "apiVersion": 23,
   "entry": "plugin.js",
-  "description": "Bilibili (China e Internacional): catálogo robusto con MD5 puro, fallback ranking, subtítulos y reproducción.",
+  "description": "Bilibili China: catálogo, búsqueda, cuenta, subtítulos y reproducción. MD5 puro.",
   "author": "Susejing",
   "homepage": "https://github.com/Susejing/kino-plugin-bilibili",
   "hosts": [
@@ -12,36 +12,30 @@
     "www.bilibili.com",
     "*.bilibili.com",
     "*.bilivideo.com",
-    "api.bilibili.tv",
-    "www.bilibili.tv",
-    "*.bilibili.tv",
-    "*.akamaized.net",
     "passport.bilibili.com"
   ],
   "streamHosts": "any",
   "capabilities": [
-    "search", "home", "browse", "episodes", "resolve",
-    "subtitles", "segments", "tracking", "playlists",
-    "download", "scopedSearch"
+    "search",
+    "home",
+    "browse",
+    "resolve",
+    "subtitles",
+    "playlists",
+    "download",
+    "scopedSearch"
   ],
   "resolveAhead": true,
   "visualBrowser": true,
   "browser": "pages",
-  "categories": ["anime", "movies", "series"],
+  "categories": [
+    "anime",
+    "movies",
+    "series"
+  ],
   "color": "#FB7299",
   "debug": false,
   "settings": [
-    {
-      "key": "region",
-      "label": "Versión",
-      "type": "select",
-      "default": "china",
-      "options": [
-        { "value": "china", "label": "China (recomendado)" },
-        { "value": "intl", "label": "Internacional" }
-      ],
-      "hint": "China funciona mejor ahora. Internacional depende de API que a veces falla."
-    },
     {
       "key": "link_account",
       "label": "Vincular cuenta (Navegador)",
@@ -69,12 +63,6 @@
       "label": "Cookie bili_jct",
       "type": "password",
       "hint": "Se llena automáticamente."
-    },
-    {
-      "key": "trakt_sync",
-      "label": "Sincronizar con Trakt",
-      "type": "toggle",
-      "default": true
     }
   ]
 }
