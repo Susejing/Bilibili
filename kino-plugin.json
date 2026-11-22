@@ -1,10 +1,10 @@
 {
   "id": "bilibili",
   "name": "Bilibili",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "apiVersion": 23,
   "entry": "plugin.js",
-  "description": "Bilibili con WBI seguro (fallback), verificación de cuenta y sincronización de progreso.",
+  "description": "Bilibili (China e Internacional): búsqueda, catálogo, cuenta, subtítulos, progreso y reproducción más rápida.",
   "author": "Susejing",
   "homepage": "https://github.com/Susejing/kino-plugin-bilibili",
   "hosts": [
@@ -20,15 +20,16 @@
   ],
   "streamHosts": "any",
   "capabilities": [
-    "search", "home", "browse", "episodes", "resolve", 
-    "subtitles", "segments", "tracking", "playlists", 
+    "search", "home", "browse", "episodes", "resolve",
+    "subtitles", "segments", "tracking", "playlists",
     "download", "scopedSearch"
   ],
+  "resolveAhead": true,
   "visualBrowser": true,
   "browser": "pages",
   "categories": ["anime", "movies", "series"],
   "color": "#FB7299",
-  "debug": true,
+  "debug": false,
   "settings": [
     {
       "key": "region",
