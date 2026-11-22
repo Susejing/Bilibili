@@ -1,4 +1,4 @@
-// Kino plugin: Bilibili v1.6.3 — Susejing
+// Kino plugin: Bilibili v1.6.4 — Susejing
 const API="https://api.bilibili.com",WEB="https://www.bilibili.com";
 const UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 function log(...a){try{kino.log(...a)}catch{}}
@@ -32,7 +32,7 @@ export async function playlists(){return[{id:"trending",name:t("Tendencias","Tre
 export async function categories(){return[{id:"anime",name:t("Anime","Anime")},{id:"movies",name:t("Películas","Movies")},{id:"series",name:t("Series","Series")}]}
 export async function prepare(ref){try{await ensureBuvid()}catch{}}
 export async function resolve(ref){return cnResolve(String(ref||""))}
-export async function subtitles(ref){try{let bvid=String(ref).startsWith("BV")?String(ref):null;let aid=String(ref).startsWith("av")?String(ref).slice(2):null;if(!bvid&&!aid)bvid=String(ref);if(!bvid&&!aid)return[];await ensureBuvid();const view=await getJson(API+"/x/web-interface/view?"+(bvid?"bvid="+encodeURIComponent(bvid):"aid="+encodeURIComponent(aid)));const vd=view&&view.data;if(!vd||!vd.cid)return[];const data=await getJson(API+"/x/player/v2?bvid="+vd.bvid+"&cid="+vd.cid);const out=[];for(const sub of((data.data&&data.data.subtitle&&data.data.subtitle.subtitles)||[])){if(sub.subtitle_url&&sub.lan){let u=sub.subtitle_url;if(u.startsWith("//"))u="https:"+u;out.push({lang:sub.lan,url:u,format:"json"})}return out}catch{return[]}}
+export async function subtitles(ref){try{let bvid=String(ref).startsWith("BV")?String(ref):null;let aid=String(ref).startsWith("av")?String(ref).slice(2):null;if(!bvid&&!aid)bvid=String(ref);if(!bvid&&!aid)return[];await ensureBuvid();const view=await getJson(API+"/x/web-interface/view?"+(bvid?"bvid="+encodeURIComponent(bvid):"aid="+encodeURIComponent(aid)));const vd=view&&view.data;if(!vd||!vd.cid)return[];const data=await getJson(API+"/x/player/v2?bvid="+vd.bvid+"&cid="+vd.cid);const out=[];for(const sub of((data.data&&data.data.subtitle&&data.data.subtitle.subtitles)||[])){if(sub.subtitle_url&&sub.lan){let u=sub.subtitle_url;if(u.startsWith("//"))u="https:"+u;out.push({lang:sub.lan,url:u,format:"json"})}}return out}catch(e){return[]}}
 export async function download(ref){const stream=await resolve(ref);return{url:stream.url,filename:"bilibili_"+String(ref).replace(/:/g,"_")+".mp4",headers:stream.headers}}
 export async function track(){}
 export async function segments(){return{intro:null,outro:null}}
