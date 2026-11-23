@@ -1,173 +1,283 @@
-// Bilibili v1.5.2-restore — catálogo mínimo estable
+// Kino plugin: Bilibili v0.6.0
+// Búsqueda y catálogo estables. Reproducción si la red lo permite.
+
 const API = "https://api.bilibili.com";
 const WEB = "https://www.bilibili.com";
-const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 
-function t(es, en) {
-  return String(kino.lang || "es").toLowerCase().startsWith("es") ? es : en;
+const UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+
+function log(...args) {
+  try {
+    kino.log(...args);
+  } catch {}
 }
-function cleanTitle(title) {
-  return String(title || "").replace(/<[^>]+>/g, "").trim();
+
+function sessdata() {
+  let s = String(kino.config.get("sessdata") || "").trim();
+  if (s.toLowerCase().startsWith("sessdata=")) s = s.slice(9).trim();
+  return s;
 }
+
+let buvidCache = null;
+
+async function ensureBuvid() {
+  if (buvidCache) return buvidCache;
+  try {
+    const saved = kino.storage.get("buvid");
+    if (saved && saved.b3) {
+      buvidCache = saved;
+      return buvidCache;
+    }
+  } catch {}
+
+  try {
+    const r = await kino.fetch(API + "/x/frontend/finger/spi", {
+      headers: { "User-Agent": UA, Referer: WEB + "/", Origin: WEB },
+      timeoutMs: 12000,
+    });
+    if (r.ok) {
+      const data = r.json();
+      if (data && data.code === 0 && data.data) {
+        buvidCache = {
+          b3: data.data.b_3 || data.data.buvid3 || "",
+          b4: data.data.b_4 || data.data.buvid4 || "",
+        };
+        try {
+          kino.storage.set("buvid", buvidCache);
+        } catch {}
+        return buvidCache;
+      }
+    }
+  } catch (e) {
+    log("buvid", e && e.message);
+  }
+
+  const rand = () =>
+    "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+      const n = (Math.random() * 16) | 0;
+      const v = c === "x" ? n : (n & 0x3) | 0x8;
+      return v.toString(16);
+    });
+  buvidCache = { b3: rand() + "infoc", b4: rand() };
+  try {
+    kino.storage.set("buvid", buvidCache);
+  } catch {}
+  return buvidCache;
+}
+
+function cookieHeader() {
+  const parts = [];
+  const sd = sessdata();
+  if (sd) parts.push("SESSDATA=" + sd);
+  if (buvidCache) {
+    if (buvidCache.b3) parts.push("buvid3=" + buvidCache.b3);
+    if (buvidCache.b4) parts.push("buvid4=" + buvidCache.b4);
+  }
+  return parts.length ? parts.join("; ") : undefined;
+}
+
+function baseHeaders(extra) {
+  const h = {
+    "User-Agent": UA,
+    Referer: WEB + "/",
+    Origin: WEB,
+  };
+  const ck = cookieHeader();
+  if (ck) h.Cookie = ck;
+  if (extra) for (const k in extra) h[k] = extra[k];
+  return h;
+}
+
+function cleanTitle(t) {
+  return String(t || "").replace(/<[^>]+>/g, "").trim();
+}
+
 function posterUrl(pic) {
   if (!pic) return undefined;
   if (pic.startsWith("//")) return "https:" + pic;
   if (pic.startsWith("http")) return pic;
   return undefined;
 }
-export function theme() {
-  return { primary: "#FB7299", background: "#0E0E0E" };
-}
-function headers() {
-  return { "User-Agent": UA, Referer: WEB + "/", Origin: WEB };
-}
-function toItem(v) {
+
+function toVideoItem(v) {
   return {
     id: String(v.bvid || v.aid),
     ref: v.bvid || ("av" + v.aid),
     title: cleanTitle(v.title),
     kind: "movie",
     poster: posterUrl(v.pic),
+    year: v.pubdate
+      ? String(new Date(v.pubdate * 1000).getFullYear())
+      : undefined,
+    overview: cleanTitle(v.description || v.desc || "").slice(0, 300),
   };
 }
-async function getPopular() {
-  const r = await kino.fetch(API + "/x/web-interface/popular?ps=20&pn=1", {
-    headers: headers(),
+
+async function getJson(url) {
+  await ensureBuvid();
+  const r = await kino.fetch(url, {
+    headers: baseHeaders(),
+    cookies: true,
     timeoutMs: 20000,
   });
-  if (!r.ok) throw new Error("HTTP " + r.status);
-  const data = JSON.parse(r.text());
-  if (data.code !== 0) throw new Error(String(data.message || data.code));
-  return ((data.data && data.data.list) || []).map(toItem).filter((i) => i.ref);
-}
-async function getRanking() {
-  const r = await kino.fetch(API + "/x/web-interface/ranking/v2?rid=0&type=all", {
-    headers: headers(),
-    timeoutMs: 20000,
-  });
-  if (!r.ok) throw new Error("HTTP " + r.status);
-  const data = JSON.parse(r.text());
-  if (data.code !== 0) throw new Error(String(data.message || data.code));
-  return ((data.data && data.data.list) || []).map(toItem).filter((i) => i.ref);
-}
-async function searchType(q, page) {
-  const r = await kino.fetch(
-    API + "/x/web-interface/search/type?search_type=video&keyword=" + encodeURIComponent(q) + "&page=" + (page || 1),
-    { headers: headers(), timeoutMs: 20000 }
-  );
-  if (!r.ok) return [];
-  const data = JSON.parse(r.text());
-  if (data.code !== 0) return [];
-  return ((data.data && data.data.result) || []).map(toItem).filter((i) => i.ref);
-}
-export async function home() {
-  const rows = [];
-  try {
-    const items = await getPopular();
-    if (items.length) rows.push({ title: t("Tendencias", "Trending"), items });
-  } catch (e) {
-    try {
-      const items = await getRanking();
-      if (items.length) rows.push({ title: t("Tendencias", "Trending"), items });
-    } catch (e2) {}
-  }
-  if (!rows.length) {
-    for (const q of ["动画", "番剧", "anime", "音乐"]) {
-      try {
-        const items = (await searchType(q, 1)).slice(0, 15);
-        if (items.length) rows.push({ title: q, items });
-      } catch (e) {}
-      if (rows.length >= 2) break;
+  if (!r.ok) {
+    if (r.status === 412) {
+      throw kino.error("unavailable", "HTTP 412", {
+        userMessage:
+          "Bilibili bloqueó la reproducción (412). Prueba VPN (HK/JP) o míralo en la app oficial.",
+      });
     }
-  }
-  if (!rows.length) {
-    throw kino.error("unavailable", "empty", {
-      userMessage: t(
-        "No se pudo cargar el catálogo de Bilibili. Revisa la red o usa VPN.",
-        "Could not load Bilibili catalog. Check network or use VPN."
-      ),
+    throw kino.error("unavailable", "HTTP " + r.status, {
+      userMessage: "Bilibili no respondió (HTTP " + r.status + ")",
     });
   }
-  return rows;
+  const text = r.text();
+  if (text.trim().startsWith("<")) {
+    throw kino.error("unavailable", "blocked", {
+      userMessage:
+        "Bilibili bloqueó la petición. Prueba VPN o la app oficial.",
+    });
+  }
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw kino.error("unavailable", "bad json", {
+      userMessage: "Respuesta inválida de Bilibili",
+    });
+  }
+  if (data.code !== 0 && data.code !== undefined) {
+    const msg = data.message || String(data.code);
+    if (data.code === -412 || data.code === 412) {
+      throw kino.error("unavailable", msg, {
+        userMessage:
+          "Bilibili bloqueó el stream. Prueba VPN (HK/JP) o la app oficial.",
+      });
+    }
+    throw kino.error("unavailable", msg, {
+      userMessage: "Bilibili: " + msg,
+    });
+  }
+  return data;
 }
+
 export async function search(query) {
-  const q = ((query && query.q) || "").trim();
+  const q = (query.q || "").trim();
   if (!q) return [];
-  return searchType(q, 1);
-}
-export async function browse(ref, cursor) {
-  const s = String(ref || "");
-  if (s === "browse:popular" || s === "popular") {
-    try {
-      const items = await getPopular();
-      return { items };
-    } catch (e) {
-      const items = await getRanking();
-      return { items };
+
+  const url =
+    API +
+    "/x/web-interface/search/all/v2?keyword=" +
+    encodeURIComponent(q) +
+    "&page=1";
+
+  const data = await getJson(url);
+  const blocks = (data.data && data.data.result) || [];
+  const out = [];
+  const seen = new Set();
+
+  for (const block of blocks) {
+    if (block.result_type !== "video") continue;
+    const list = Array.isArray(block.data) ? block.data : [];
+    for (const v of list) {
+      const item = toVideoItem(v);
+      if (!item.ref || seen.has(item.ref)) continue;
+      seen.add(item.ref);
+      out.push(item);
     }
   }
-  if (s === "browse:anime" || s === "anime") {
-    return { items: await searchType("番剧", 1) };
-  }
-  return { items: [] };
+  return out;
 }
-export async function playlists() {
+
+export async function home() {
+  const data = await getJson(API + "/x/web-interface/ranking/v2?rid=0&type=all");
+  const list = (data.data && data.data.list) || [];
   return [
-    { id: "trending", name: t("Tendencias", "Trending"), ref: "browse:popular" },
-    { id: "anime", name: t("Anime", "Anime"), ref: "browse:anime" },
+    {
+      id: "popular",
+      title: "Populares en Bilibili",
+      items: list.slice(0, 20).map(toVideoItem),
+    },
   ];
 }
-export async function categories() {
-  return [
-    { id: "anime", name: t("Anime", "Anime") },
-    { id: "movies", name: t("Películas", "Movies") },
-    { id: "series", name: t("Series", "Series") },
-  ];
-}
-export async function resolve(ref) {
-  const id = String(ref || "");
-  let bvid = id.startsWith("BV") ? id : null;
-  let aid = id.startsWith("av") ? id.slice(2) : null;
-  if (!bvid && !aid) bvid = id;
-  const viewUrl =
-    API +
-    "/x/web-interface/view?" +
-    (bvid ? "bvid=" + encodeURIComponent(bvid) : "aid=" + encodeURIComponent(aid));
-  const vr = await kino.fetch(viewUrl, { headers: headers(), timeoutMs: 20000 });
-  if (!vr.ok) throw kino.error("unavailable", "view", { userMessage: t("No se pudo abrir.", "Could not open.") });
-  const view = JSON.parse(vr.text());
-  if (view.code !== 0 || !view.data) throw kino.error("not_found", "no data", { userMessage: t("No encontrado.", "Not found.") });
-  const vd = view.data;
-  const playUrl =
-    API +
-    "/x/player/playurl?bvid=" +
-    encodeURIComponent(vd.bvid) +
-    "&cid=" +
-    vd.cid +
-    "&qn=64&fnval=1&platform=html5";
-  const pr = await kino.fetch(playUrl, { headers: headers(), timeoutMs: 20000 });
-  if (!pr.ok) throw kino.error("unavailable", "play", { userMessage: t("Sin stream.", "No stream.") });
-  const play = JSON.parse(pr.text());
-  const d = play.data || {};
-  const h = { "User-Agent": UA, Referer: WEB + "/video/" + vd.bvid };
+
+function streamFromPlay(d, realBvid) {
+  const headers = baseHeaders({ Referer: WEB + "/video/" + realBvid });
   if (d.durl && d.durl[0] && d.durl[0].url) {
-    return { url: d.durl[0].url, headers: h, mime: "video/mp4" };
+    return { url: d.durl[0].url, headers, mime: "video/mp4" };
   }
   if (d.dash && d.dash.video && d.dash.video.length) {
-    const v = d.dash.video[0];
+    const v = d.dash.video.find((x) => x.codecid === 7) || d.dash.video[0];
     const u = v.baseUrl || v.base_url;
-    if (u) return { url: u, headers: h };
+    if (u) return { url: u, headers };
   }
-  throw kino.error("unavailable", "no url", { userMessage: t("Sin enlace de vídeo.", "No video link.") });
+  return null;
 }
-export async function prepare() {}
-export async function action() { return { message: t("Usa la versión completa para vincular cuenta.", "Use full version to link account.") }; }
-export async function subtitles() { return []; }
-export async function episodes() { return { episodes: [] }; }
-export async function download(ref) {
-  const s = await resolve(ref);
-  return { url: s.url, filename: "bilibili.mp4", headers: s.headers };
+
+export async function resolve(ref) {
+  await ensureBuvid();
+
+  const s = String(ref);
+  let bvid = null;
+  let aid = null;
+  if (s.startsWith("BV")) bvid = s;
+  else if (s.startsWith("av")) aid = s.slice(2);
+  else bvid = s;
+
+  let viewUrl = API + "/x/web-interface/view?";
+  if (bvid) viewUrl += "bvid=" + encodeURIComponent(bvid);
+  else viewUrl += "aid=" + encodeURIComponent(aid);
+
+  const view = await getJson(viewUrl);
+  const vd = view.data;
+  if (!vd) {
+    throw kino.error("not_found", "no data", {
+      userMessage: "Video no encontrado",
+    });
+  }
+
+  const cid = vd.cid;
+  const realBvid = vd.bvid;
+  const realAid = vd.aid;
+
+  const attempts = [
+    API +
+      "/x/player/playurl?bvid=" +
+      encodeURIComponent(realBvid) +
+      "&cid=" +
+      cid +
+      "&qn=64&fnval=1&platform=html5&high_quality=1",
+    API +
+      "/x/player/playurl?bvid=" +
+      encodeURIComponent(realBvid) +
+      "&cid=" +
+      cid +
+      "&qn=32&fnval=1&platform=html5",
+    API +
+      "/x/player/playurl?avid=" +
+      realAid +
+      "&cid=" +
+      cid +
+      "&qn=32&fnval=0",
+  ];
+
+  let lastErr = null;
+  for (const playUrl of attempts) {
+    try {
+      const play = await getJson(playUrl);
+      const stream = streamFromPlay(play.data, realBvid);
+      if (stream) return stream;
+    } catch (e) {
+      lastErr = e;
+      log("play fail", e && e.message);
+    }
+  }
+
+  if (lastErr) throw lastErr;
+
+  throw kino.error("unavailable", "no stream", {
+    userMessage:
+      "No se pudo reproducir. Fuera de Asia suele hacer falta VPN (HK/JP) o verlo en la app de Bilibili.",
+  });
 }
-export async function track() {}
-export async function segments() { return { intro: null, outro: null }; }
-export async function scopedSearch(query) { return search(query); }
