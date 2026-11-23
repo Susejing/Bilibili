@@ -1,87 +1,28 @@
 {
   "id": "bilibili",
   "name": "Bilibili",
-  "version": "1.5.2",
-  "apiVersion": 23,
+  "version": "0.6.1",
+  "apiVersion": 6,
   "entry": "plugin.js",
-  "description": "Bilibili China e Internacional (restaurado 1.5.x estable)",
+  "description": "Busca y explora videos de Bilibili. La reproducción puede requerir VPN fuera de Asia.",
   "author": "Susejing",
   "homepage": "https://github.com/Susejing/kino-plugin-bilibili",
   "hosts": [
     "api.bilibili.com",
     "www.bilibili.com",
     "*.bilibili.com",
-    "*.bilivideo.com",
-    "api.bilibili.tv",
-    "www.bilibili.tv",
-    "*.bilibili.tv",
-    "*.akamaized.net",
-    "passport.bilibili.com"
+    "*.bilivideo.com"
   ],
   "streamHosts": "any",
-  "capabilities": [
-    "search",
-    "home",
-    "browse",
-    "episodes",
-    "resolve",
-    "subtitles",
-    "segments",
-    "tracking",
-    "playlists",
-    "download",
-    "scopedSearch"
-  ],
-  "visualBrowser": true,
-  "browser": "pages",
-  "categories": ["anime", "movies", "series"],
+  "capabilities": ["search", "home", "resolve"],
   "color": "#FB7299",
-  "debug": true,
+  "categories": ["anime", "movies", "series"],
   "settings": [
-    {
-      "key": "region",
-      "label": "Versión",
-      "type": "select",
-      "default": "china",
-      "options": [
-        { "value": "china", "label": "China" },
-        { "value": "intl", "label": "Internacional" }
-      ],
-      "hint": "Usa China si el catálogo sale vacío."
-    },
-    {
-      "key": "link_account",
-      "label": "Vincular cuenta (Navegador)",
-      "type": "action"
-    },
-    {
-      "key": "verify_account",
-      "label": "Verificar Cuenta",
-      "type": "action"
-    },
     {
       "key": "sessdata",
       "label": "Cookie SESSDATA",
       "type": "password",
-      "hint": "Se llena automáticamente."
-    },
-    {
-      "key": "dedeuserid",
-      "label": "Cookie DedeUserID",
-      "type": "text",
-      "hint": "Se llena automáticamente."
-    },
-    {
-      "key": "bili_jct",
-      "label": "Cookie bili_jct",
-      "type": "password",
-      "hint": "Se llena automáticamente."
-    },
-    {
-      "key": "trakt_sync",
-      "label": "Sincronizar con Trakt",
-      "type": "toggle",
-      "default": true
+      "hint": "Opcional. F12, Application, Cookies, SESSDATA"
     }
   ]
 }
